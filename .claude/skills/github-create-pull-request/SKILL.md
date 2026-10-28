@@ -25,7 +25,7 @@ turn. **Only the user merges**: never run `gh pr merge`.
 
    ## To check
 
-   - [ ] `uv run pytest`
+   - [ ] `uv run pytest` (from `projects/analysis/`)
    - [ ] <a real run, e.g. `uv run ts-fetch --start 2026-10-01 --end 2026-10-03`>
    BODY
    )"

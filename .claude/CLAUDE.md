@@ -79,16 +79,21 @@ It runs in **WSL**, with the repo on the Linux filesystem (`~/dev`, never `/mnt/
 | ------------ | ------------------------------------------------------------ |
 | Python       | 3.13, managed by **uv** (`uv.lock` committed) |
 | Market data  | `httpx` against Massive's REST API                           |
-| Storage      | `data/` (git-ignored): JSON for grouped bars, splits and picks, parquet (`pandas` + `pyarrow`) for raw 1-min bars |
-| Tests        | `pytest`, no network                                         |
+| Storage      | `projects/analysis/data/` (git-ignored): JSON for grouped bars, splits and picks, parquet (`pandas` + `pyarrow`) for raw 1-min bars |
+| Tests        | `pytest`, no network; GitHub Actions on every PR and push to `master` |
 
 ```
-src/ts_analysis/
-├── selection.py   # gap rule + random sample (pure)
-├── massive.py     # Massive client + rate limiter
-├── store.py       # data/ layout
-└── fetch.py       # backfill orchestration + `ts-fetch` CLI
+projects/analysis/          # the Python project: pyproject.toml, uv.lock, data/ (git-ignored)
+├── src/ts_analysis/
+│   ├── selection.py        # gap rule + random sample (pure)
+│   ├── massive.py          # Massive client + rate limiter
+│   ├── store.py            # data/ layout
+│   └── fetch.py            # backfill orchestration + `ts-fetch` CLI
+└── tests/
+devops/                     # README (index) + docs/github.md: merge rules, master protection, hook, CI
 ```
+
+From `projects/analysis/` (`.env` stays at the repo root, found from there):
 
 ```bash
 uv sync                                               # install, creates .venv
@@ -132,10 +137,9 @@ the issue holds the rationale.
   `docs(1/repo): start the README`. No issue → ask the user which one to use.
 - **Default = suggest, don't execute**: never run `git add/commit/push/branch/tag/rebase` or
   `gh pr/issue` unless the user asks in the current turn. Authorization does not carry forward to
-  later turns. Never push to `master`: its protection (PR required, linear history, no
-  deletion) lets admins bypass it and allows force-pushes, so it would not stop you. The
-  versioned `.githooks/pre-push` refuses a plain push to `master` and lets a force-push through;
-  each clone enables it once with `git config core.hooksPath .githooks` (the user runs it).
+  later turns. Never push to `master`: its protection lets admins bypass it and allows
+  force-pushes, so it would not stop you. Its rules and the `.githooks/pre-push` guard are in
+  [`devops/docs/github.md`](../devops/docs/github.md).
 - See the [`git-commit`](./skills/git-commit/SKILL.md) skill.
 
 ### Pull requests
