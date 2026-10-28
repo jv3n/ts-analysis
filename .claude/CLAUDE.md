@@ -107,15 +107,39 @@ the issue holds the rationale.
 - **Every commit is linked to an issue**, its number prefixing the scope, e.g.
   `docs(1/repo): start the README`. No issue → ask the user which one to use.
 - **Default = suggest, don't execute**: never run `git add/commit/push/branch/tag/rebase` or
-  `gh pr/issue` unless the user asks in the current turn.
-- One commit per PR (amend + force-push the PR branch), and the user merges.
+  `gh pr/issue` unless the user asks in the current turn. Authorization does not carry forward to
+  later turns. `master` has no branch protection: never push to it.
+- See the [`git-commit`](./skills/git-commit/SKILL.md) skill.
+
+### Pull requests
+
+- **No work without an issue, one PR per issue.** The branch is named `<issue>-<slug>`, e.g.
+  `3-fetch-gap-bars`, and is cut from an up-to-date `master`.
+- **One commit per PR**: a fix after review is amended and force-pushed to the PR branch, never
+  to `master`. Before pushing, check the PR is still open: a merged PR's branch is deleted, and a
+  push would recreate it.
+- The body opens with `Refs #N` (and the epic, e.g. `part of epic #1`), **never `Closes` /
+  `Fixes` / `Resolves`**, then says what changed and what to run to check it.
+- **Only the user merges.** Never run `gh pr merge`.
+- See the [`github-create-pull-request`](./skills/github-create-pull-request/SKILL.md) skill, and
+  [`code-review`](./skills/code-review/SKILL.md) for a read-only review before the commit.
 
 ### Backlog
 
 Issues live in this repo and on its own board, **TS Analysis Board** (project 3, owner `jv3n`),
-separate from the TickerStory Board that `trade` and `ts-scanner` share. A new issue goes on the
-board with **Status** and **Priority** set, and carries a `prio:*` and a `scope:*` label. A PR
-references its issues with `Refs #N`, never `Closes` / `Fixes`.
+separate from the TickerStory Board that `trade` and `ts-scanner` share.
+
+- A new issue goes on the board with **Status** and **Priority** set, and carries a `prio:*`
+  (`P0`–`P3`), a `scope:*` (`product` / `tech`) and a type label (`enhancement` / `bug` /
+  `documentation` / `question`).
+- The POC is epic **#1**. Its steps are **sub-issues** of it, titled `#1 <Area>: <what>`, with a
+  body that opens with `Part of #1` and ends with an `## Acceptance` checklist.
+- Statuses: Backlog → Ready → In progress → In review → Test → Done. The issue goes to
+  **In review** when its PR opens. Once the PR is merged, suggest **Test** when the change still
+  has to be tried on real data (a backfill on the account, a replay run), **Done** otherwise.
+  Only the user moves an issue to Done.
+- Creating an issue is fine when the user asks for one. Never close or reopen an issue, edit
+  labels or move a card on your own: suggest it, and the user confirms in the current turn.
 
 ## Languages
 
