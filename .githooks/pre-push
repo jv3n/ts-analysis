@@ -1,0 +1,14 @@
+#!/bin/sh
+# GitHub lets the owner bypass master's protection for both pushes and force-pushes, and cannot
+# tell them apart: this hook keeps the force-push and refuses the plain one.
+zero=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = refs/heads/master ] || continue
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" = "$zero" ] || git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "pre-push: master is updated through a pull request; only a history rewrite is pushed directly." >&2
+    exit 1
+  fi
+done
+exit 0

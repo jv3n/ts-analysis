@@ -132,7 +132,10 @@ the issue holds the rationale.
   `docs(1/repo): start the README`. No issue → ask the user which one to use.
 - **Default = suggest, don't execute**: never run `git add/commit/push/branch/tag/rebase` or
   `gh pr/issue` unless the user asks in the current turn. Authorization does not carry forward to
-  later turns. `master` has no branch protection: never push to it.
+  later turns. Never push to `master`: its protection (PR required, linear history, no
+  deletion) lets admins bypass it and allows force-pushes, so it would not stop you. The
+  versioned `.githooks/pre-push` refuses a plain push to `master` and lets a force-push through;
+  each clone enables it once with `git config core.hooksPath .githooks` (the user runs it).
 - See the [`git-commit`](./skills/git-commit/SKILL.md) skill.
 
 ### Pull requests
@@ -144,7 +147,10 @@ the issue holds the rationale.
   push would recreate it.
 - The body opens with `Refs #N` (and the epic, e.g. `part of epic #1`), **never `Closes` /
   `Fixes` / `Resolves`**, then says what changed and what to run to check it.
-- **Only the user merges.** Never run `gh pr merge`.
+- **Only the user merges**, by rebase: merge commits and squash are disabled, so `master` stays
+  linear. Never run `gh pr merge`.
+- GitHub deletes the remote branch on merge. Locally, suggest `git checkout master && git pull
+  && git fetch --prune && git branch -D <branch>`.
 - See the [`github-create-pull-request`](./skills/github-create-pull-request/SKILL.md) skill, and
   [`code-review`](./skills/code-review/SKILL.md) for a read-only review before the commit.
 

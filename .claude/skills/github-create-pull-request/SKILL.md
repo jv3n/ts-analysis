@@ -47,4 +47,5 @@ turn. **Only the user merges**: never run `gh pr merge`.
 
 A fix is amended into the single commit and force-pushed with `--force-with-lease`, after
 checking the PR is still open. Once the user has merged, suggest **Test** (still to try on real
-data) or **Done** for the issue. Never move it yourself unless asked.
+data) or **Done** for the issue, and the local cleanup (`git checkout master && git pull &&
+git fetch --prune && git branch -D <branch>`). Never move it yourself unless asked.
