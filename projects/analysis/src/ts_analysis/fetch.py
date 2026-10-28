@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -105,16 +106,25 @@ def fetch_day(
         store.save_picks(day, picks)
     else:
         check_settings(picks, rule, per_day, seed)
-    for ticker in picks["picked"]:
-        if not store.has_bars(day, ticker):
-            store.save_bars(day, ticker, source.minute_bars(ticker, day))
+    picked = picks["picked"]
+    log.info("%s %d candidates, %d picked: %s", day, len(picks["candidates"]), len(picked), " ".join(picked))
+    for number, ticker in enumerate(picked, 1):
+        if store.has_bars(day, ticker):
+            log.info("%s   %2d/%d %-6s already stored", day, number, len(picked), ticker)
+            continue
+        rows = source.minute_bars(ticker, day)
+        store.save_bars(day, ticker, rows)
+        log.info("%s   %2d/%d %-6s %d bars", day, number, len(picked), ticker, len(rows))
     return picks
 
 
 def backfill(
     source: Source, store: Store, start: date, end: date, rule: GapRule, per_day: int, seed: str
 ) -> None:
-    for day in weekdays(start, end):
+    days = list(weekdays(start, end))
+    started = time.monotonic()
+    for number, day in enumerate(days, 1):
+        log.info("%s day %d/%d", day, number, len(days))
         try:
             picks = fetch_day(source, store, day, rule, per_day, seed)
         except DayNotPublished:
@@ -123,7 +133,7 @@ def backfill(
         if picks is None:
             log.info("%s market holiday", day)
         else:
-            log.info("%s %d candidates, %d picked", day, len(picks["candidates"]), len(picks["picked"]))
+            log.info("%s day %d/%d done, %.0f min elapsed", day, number, len(days), (time.monotonic() - started) / 60)
 
 
 def last_published_day() -> date:

@@ -54,6 +54,22 @@ class Store:
     def load_bars(self, day: date, ticker: str) -> pd.DataFrame:
         return pd.read_parquet(self.bars_path(day, ticker))
 
+    def forecasts_path(self, model: str, day: date) -> Path:
+        return self.root / "forecasts" / model / f"{day.isoformat()}.parquet"
+
+    def has_forecasts(self, model: str, day: date) -> bool:
+        return self.forecasts_path(model, day).exists()
+
+    def save_forecasts(self, model: str, day: date, frame: pd.DataFrame) -> None:
+        path = self.forecasts_path(model, day)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        frame.to_parquet(tmp, index=False)
+        tmp.replace(path)
+
+    def load_forecasts(self, model: str, day: date) -> pd.DataFrame:
+        return pd.read_parquet(self.forecasts_path(model, day))
+
 
 def _read_json(path: Path):
     return json.loads(path.read_text()) if path.exists() else None

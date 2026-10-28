@@ -1,3 +1,4 @@
+import logging
 import time
 from collections.abc import Callable
 from datetime import date
@@ -6,6 +7,8 @@ import httpx
 
 BASE_URL = "https://api.massive.com"
 REQUESTS_PER_MINUTE = 5
+
+log = logging.getLogger("ts_analysis.massive")
 
 
 class DayNotPublished(Exception):
@@ -26,12 +29,14 @@ class RateLimiter:
         self._sleep = sleep
         self._next = float("-inf")
 
-    def wait(self) -> None:
+    def wait(self) -> float:
         now = self._clock()
-        if now < self._next:
-            self._sleep(self._next - now)
+        waited = max(0.0, self._next - now)
+        if waited:
+            self._sleep(waited)
             now = self._next
         self._next = now + self._interval
+        return waited
 
 
 class MassiveClient:
@@ -51,22 +56,25 @@ class MassiveClient:
 
     def _get(self, path: str, params: dict) -> dict:
         for attempt in range(1, self._max_attempts + 1):
-            self._limiter.wait()
+            waited = self._limiter.wait()
             last = attempt == self._max_attempts
             try:
                 response = self._http.get(path, params=params)
-            except httpx.TransportError:
+            except httpx.TransportError as error:
                 if last:
                     raise
+                log.warning("GET %s failed (%s), retry %d in %d s", path, type(error).__name__, attempt, 30 * attempt)
                 self._sleep(30 * attempt)
                 continue
+            log.info("GET %s -> %d (waited %.0f s for the quota)", path, response.status_code, waited)
             if response.status_code == 403:
                 raise DayNotPublished(path)
             if response.status_code == 429 or response.status_code >= 500:
                 if last:
                     response.raise_for_status()
-                backoff = 60 if response.status_code == 429 else 30 * attempt
-                self._sleep(retry_after(response, default=backoff))
+                backoff = retry_after(response, default=60 if response.status_code == 429 else 30 * attempt)
+                log.warning("GET %s -> %d, retry %d in %.0f s", path, response.status_code, attempt, backoff)
+                self._sleep(backoff)
                 continue
             response.raise_for_status()
             return response.json()
