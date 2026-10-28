@@ -65,6 +65,26 @@ data/
 └── bars/<day>/<ticker>.parquet   # 1-min bars, UTC, extended hours included (04:00–20:00 ET)
 ```
 
+## Replay
+
+```bash
+uv run ts-replay --start 2026-10-01 --end 2026-10-27   # --model 28M by default, --step 5
+```
+
+Each stored day is played back from 9:30 to 15:55 ET, one cut every `--step` minutes. At a cut the
+model sees the bars that started before it, from 4:00 ET, minutes with no trade filled with the last
+close and volume 0, as log prices with the volume as a past covariate. It forecasts **+5, +15,
++30 min and the close**, on 21 quantiles. Two baselines forecast the same cuts: **flat** (the last
+price) and a **random walk** at the last hour's volatility.
+
+The first run downloads the weights from Hugging Face. A day already replayed for a model is
+skipped, so a rerun resumes.
+
+```
+data/forecasts/<model>/<day>.parquet   # model, ticker, day, cut, horizon, to_close, last, actual,
+                                       # q01…q99 (predicted move: 0.10 = +10 %), ms_per_forecast
+```
+
 ## Later
 
 - A web view that replays a day as if it were live: the candles minute by minute, the forecast band

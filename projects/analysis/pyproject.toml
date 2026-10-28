@@ -8,13 +8,26 @@ dependencies = [
     "pandas>=2.2",
     "pyarrow>=17",
     "python-dotenv>=1.0",
+    "timestral",
+    "torch>=2.4",
 ]
 
 [project.scripts]
 ts-fetch = "ts_analysis.fetch:main"
+ts-replay = "ts_analysis.replay:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+[tool.uv.sources]
+timestral = { git = "https://github.com/mistralai/timestral" }
+torch = { index = "pytorch-cpu" }
+
+# CPU wheels only: the default index ships CUDA builds, a few GB that never run here.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
