@@ -2,6 +2,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import date
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -54,7 +55,7 @@ class MassiveClient:
         self._sleep = sleep
         self._max_attempts = max_attempts
 
-    def _get(self, path: str, params: dict) -> dict:
+    def _get(self, path: str, params: dict | None) -> dict:
         for attempt in range(1, self._max_attempts + 1):
             waited = self._limiter.wait()
             last = attempt == self._max_attempts
@@ -63,17 +64,19 @@ class MassiveClient:
             except httpx.TransportError as error:
                 if last:
                     raise
-                log.warning("GET %s failed (%s), retry %d in %d s", path, type(error).__name__, attempt, 30 * attempt)
+                log.warning(
+                    "GET %s failed (%s), retry %d in %d s", urlsplit(path).path, type(error).__name__, attempt, 30 * attempt
+                )
                 self._sleep(30 * attempt)
                 continue
-            log.info("GET %s -> %d (waited %.0f s for the quota)", path, response.status_code, waited)
+            log.info("GET %s -> %d (waited %.0f s for the quota)", urlsplit(path).path, response.status_code, waited)
             if response.status_code == 403:
                 raise DayNotPublished(path)
             if response.status_code == 429 or response.status_code >= 500:
                 if last:
                     response.raise_for_status()
                 backoff = retry_after(response, default=60 if response.status_code == 429 else 30 * attempt)
-                log.warning("GET %s -> %d, retry %d in %.0f s", path, response.status_code, attempt, backoff)
+                log.warning("GET %s -> %d, retry %d in %.0f s", urlsplit(path).path, response.status_code, attempt, backoff)
                 self._sleep(backoff)
                 continue
             response.raise_for_status()
@@ -97,6 +100,18 @@ class MassiveClient:
             {"adjusted": "false", "sort": "asc", "limit": 50000},
         )
         return payload.get("results") or []
+
+    def common_stocks(self, day: date) -> list[str]:
+        """Common stocks listed that day, delisted ones included: about 5,300 over 6 pages of 1,000."""
+        path, params = "/v3/reference/tickers", {"type": "CS", "market": "stocks", "date": day.isoformat(), "limit": 1000}
+        tickers = []
+        while True:
+            payload = self._get(path, params)
+            tickers += [row["ticker"] for row in payload.get("results") or []]
+            if not (path := payload.get("next_url")):
+                return sorted(tickers)
+            # next_url carries the cursor in its query string, which any params, even {}, would replace.
+            params = None
 
     def splits(self, day: date) -> list[dict]:
         payload = self._get("/stocks/v1/splits", {"execution_date": day.isoformat(), "limit": 5000})

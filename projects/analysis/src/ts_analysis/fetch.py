@@ -25,6 +25,8 @@ class Source(Protocol):
 
     def splits(self, day: date) -> list[dict]: ...
 
+    def common_stocks(self, day: date) -> list[str]: ...
+
 
 class PicksMismatch(Exception):
     pass
@@ -69,11 +71,13 @@ def pick(source: Source, store: Store, day: date, rule: GapRule, per_day: int, s
         return None
     prev = previous_session(source, store, day)
     splits = cached(store.load_splits, store.save_splits, source.splits, day)
+    common = cached(store.load_common, store.save_common, source.common_stocks, day) if rule.common_only else None
     candidates = gap_candidates(
         {row["T"]: row["h"] for row in today},
         {row["T"]: row["c"] for row in prev},
         rule,
         frozenset(split["ticker"] for split in splits),
+        None if common is None else frozenset(common),
     )
     return {
         "day": day.isoformat(),

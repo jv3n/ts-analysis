@@ -31,11 +31,12 @@ drop 30 %? For now, that is the whole goal. Scope and open questions:
 
 1. **Pick the tickers** — names in a **big gap**, e.g. up **≥ 40 %** on the previous close at some
    point of the day (40 % is an example, the threshold is open). One grouped-daily request finds the
-   candidates from the day's high. Take every candidate, or **a random ~10 of them**, never the top
+   candidates from the day's high, among **common stocks only**: warrants, rights and units gap 40 %
+   on a few cents and move like options. Take every candidate, or **a random ~10 of them**, never the top
    10 by the day's high: that would only keep the ones that went on running and bias every figure.
-2. **Fetch** — the day's 1-min bars of each picked ticker, about ten requests (~2 min of quota) a
-   day, stored locally. **Backfill from the start**: past days are fetched right away instead of
-   waiting for them to pile up. A month of sessions is ~45 min of quota, and 6 months a few hours,
+2. **Fetch** — the day's 1-min bars of each picked ticker, about 18 requests (~3.6 min of quota)
+   a day with the common-stock list, stored locally. **Backfill from the start**: past days are fetched right away instead of
+   waiting for them to pile up. A month of sessions is ~75 min of quota, and 6 months a few hours,
    which can run overnight. That gives thousands of forecasts to score in the first week.
 3. **Replay with simulated time** — each stored day is played back from the open, minute by minute.
    At each step the model **only sees the bars up to that minute** and forecasts what follows. A

@@ -46,12 +46,12 @@ uv run ts-fetch --start 2026-10-01 --end 2026-10-27
 ```
 
 For each session it picks the tickers whose high reached **+40 %** on the previous close (previous
-close in **$0.30–$10**), draws **10 of them at random**, and stores their 1-min bars. Prices are
+close in **$0.30–$10**), among **common stocks** only (no warrants, rights or units), draws **10 of them at random**, and stores their 1-min bars. Prices are
 **raw**, not split-adjusted, so every stored day stays consistent whenever it was fetched; a ticker
 whose split executes that day is left out, since its raw gap is meaningless.
 
-A day costs 12 requests (grouped bars, splits, 10 tickers): about 2.5 min at 5 requests a minute,
-so a month takes about 50 min. A day is only published after midnight ET; `--end` defaults to
+A day costs 18 requests (grouped bars, splits, the day's common stocks over 6 pages, 10 tickers):
+about 3.6 min at 5 requests a minute, so a month takes about 75 min. A day is only published after midnight ET; `--end` defaults to
 yesterday ET, and the run stops cleanly at the first day not published yet. Rerun the same command
 after an interruption: it resumes where it stopped. A rerun with other settings on days already
 picked fails rather than mixing two rules. The thresholds are `--min-gap`, `--min-price`,
@@ -61,6 +61,7 @@ picked fails rather than mixing two rules. The thresholds are `--min-gap`, `--mi
 data/
 ├── grouped/<day>.json            # every stock's daily bar
 ├── splits/<day>.json             # splits executed that day
+├── common/<day>.json             # common stocks listed that day, delisted ones included
 ├── picks/<day>.json              # settings, candidates (prev close, high, gap), picked tickers
 └── bars/<day>/<ticker>.parquet   # 1-min bars, UTC, extended hours included (04:00–20:00 ET)
 ```
