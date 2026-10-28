@@ -21,9 +21,42 @@ Scope, measures and open questions: [#1](https://github.com/jv3n/ts-analysis/iss
    magnitude, calibration of its quantile band) and against a naive baseline, the last price. A model
    that does not beat the baseline predicts nothing.
 
-## Status
+## Setup
 
-Nothing is built yet. Stack, setup and commands come with the first PR.
+Python 3.13 with [uv](https://docs.astral.sh/uv/), in WSL.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once
+cp .env.example .env                               # then fill MASSIVE_API_KEY
+uv sync
+uv run pytest
+```
+
+## Fetch
+
+```bash
+uv run ts-fetch --start 2026-10-01 --end 2026-10-27
+```
+
+For each session it picks the tickers whose high reached **+40 %** on the previous close (previous
+close in **$0.30–$10**), draws **10 of them at random**, and stores their 1-min bars. Prices are
+**raw**, not split-adjusted, so every stored day stays consistent whenever it was fetched; a ticker
+whose split executes that day is left out, since its raw gap is meaningless.
+
+A day costs 12 requests (grouped bars, splits, 10 tickers): about 2.5 min at 5 requests a minute,
+so a month takes about 50 min. A day is only published after midnight ET; `--end` defaults to
+yesterday ET, and the run stops cleanly at the first day not published yet. Rerun the same command
+after an interruption: it resumes where it stopped. A rerun with other settings on days already
+picked fails rather than mixing two rules. The thresholds are `--min-gap`, `--min-price`,
+`--max-price` and `--per-day`.
+
+```
+data/
+├── grouped/<day>.json            # every stock's daily bar
+├── splits/<day>.json             # splits executed that day
+├── picks/<day>.json              # settings, candidates (prev close, high, gap), picked tickers
+└── bars/<day>/<ticker>.parquet   # 1-min bars, UTC, extended hours included (04:00–20:00 ET)
+```
 
 ## Later
 

@@ -72,8 +72,32 @@ drop 30 %? For now, that is the whole goal. Scope and open questions:
 
 ## Stack
 
-Not settled yet: it comes with the first PR. Timestral's tooling is Python, unlike the rest of the
-platform (Kotlin, Angular). Once it is chosen, document it here with the setup and the commands.
+Python, unlike the rest of the platform (Kotlin, Angular), because Timestral's tooling is Python.
+It runs in **WSL**, with the repo on the Linux filesystem (`~/dev`, never `/mnt/c`).
+
+| Layer        | Tech                                                         |
+| ------------ | ------------------------------------------------------------ |
+| Python       | 3.13, managed by **uv** (`uv.lock` committed) |
+| Market data  | `httpx` against Massive's REST API                           |
+| Storage      | `data/` (git-ignored): JSON for grouped bars, splits and picks, parquet (`pandas` + `pyarrow`) for raw 1-min bars |
+| Tests        | `pytest`, no network                                         |
+
+```
+src/ts_analysis/
+├── selection.py   # gap rule + random sample (pure)
+├── massive.py     # Massive client + rate limiter
+├── store.py       # data/ layout
+└── fetch.py       # backfill orchestration + `ts-fetch` CLI
+```
+
+```bash
+uv sync                                               # install, creates .venv
+uv run pytest                                         # tests
+uv run ts-fetch --start 2026-10-01 --end 2026-10-27   # backfill; --end defaults to yesterday ET
+```
+
+`ts-fetch` is resumable: rerun the same command after an interruption, it makes no request for
+what is already in `data/`.
 
 Pure functions for every rule (selection, replay cut, scoring), with the I/O wired around them, so
 the rules are tested without the network.
