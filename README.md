@@ -28,11 +28,18 @@ Python 3.13 with [uv](https://docs.astral.sh/uv/), in WSL.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # once
 cp .env.example .env                               # then fill MASSIVE_API_KEY
+cd projects/analysis
 uv sync
 uv run pytest
 ```
 
+[CI](.github/workflows/ci.yml) runs the same tests on every pull request and every push to
+`master`, and fails if `uv.lock` is out of date with `pyproject.toml`. The CI, the merge rules and
+the git hook are described in [`devops/`](devops/README.md).
+
 ## Fetch
+
+From `projects/analysis/`, where the bars land in `data/`:
 
 ```bash
 uv run ts-fetch --start 2026-10-01 --end 2026-10-27

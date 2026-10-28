@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: projects/analysis
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests
+    # Pinned rather than ubuntu-latest: a new image is adopted on purpose, never by a label move.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # setup-uv has no floating `v10` tag, only exact versions.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: projects/analysis/uv.lock
+
+      # uv picks Python from .python-version; --locked fails if uv.lock is stale.
+      - name: Install
+        run: uv sync --locked
+
+      - name: Test
+        run: uv run pytest
