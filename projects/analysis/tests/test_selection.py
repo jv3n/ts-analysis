@@ -33,6 +33,12 @@ def test_a_ticker_without_a_previous_close_is_skipped():
     assert gap_candidates({"RDDT": 80.00}, PREV_CLOSES) == []
 
 
+def test_a_warrant_is_not_a_candidate_when_only_common_stocks_count():
+    closes = {"AISPW": 0.31, "AISP": 2.40}
+    highs = {"AISPW": 0.62, "AISP": 3.50}
+    assert tickers(gap_candidates(highs, closes, common_stocks=frozenset({"AISP"}))) == ["AISP"]
+
+
 def test_a_reverse_split_on_the_day_is_not_taken_for_a_gap():
     # A 1-for-10 on raw prices: the previous close is pre-split, the day's high post-split.
     assert gap_candidates({"MULN": 4.60}, PREV_CLOSES, split_tickers=frozenset({"MULN"})) == []

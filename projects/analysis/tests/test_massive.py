@@ -144,3 +144,21 @@ def test_a_network_error_is_retried():
         return httpx.Response(200, json={"results": []})
 
     assert client_for(handler, FakeClock()).splits(MON) == []
+
+
+def test_the_common_stocks_of_a_day_follow_every_page():
+    seen = []
+    pages = iter(
+        [
+            {"results": [{"ticker": "FFIE"}, {"ticker": "AISP"}], "next_url": f"{BASE_URL}/v3/reference/tickers?cursor=p2"},
+            {"results": [{"ticker": "SNDL"}]},
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, json=next(pages))
+
+    assert client_for(handler, FakeClock()).common_stocks(MON) == ["AISP", "FFIE", "SNDL"]
+    assert (seen[0].params["type"], seen[0].params["date"]) == ("CS", "2026-10-26")
+    assert seen[1].params["cursor"] == "p2"

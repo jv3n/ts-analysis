@@ -41,6 +41,12 @@ class Store:
     def save_picks(self, day: date, picks: dict) -> None:
         _write_json(self._day_json("picks", day), picks)
 
+    def load_common(self, day: date) -> list[str] | None:
+        return _read_json(self._day_json("common", day))
+
+    def save_common(self, day: date, tickers: list[str]) -> None:
+        _write_json(self._day_json("common", day), tickers)
+
     def has_bars(self, day: date, ticker: str) -> bool:
         return self.bars_path(day, ticker).exists()
 

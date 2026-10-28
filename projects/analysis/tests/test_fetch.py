@@ -19,15 +19,18 @@ GROUPED = {
     ],
     FRI: [
         {"T": "FFIE", "h": 1.90, "c": 1.85},
+        {"T": "BBLGW", "h": 0.33, "c": 0.31},
         {"T": "SNDL", "h": 2.15, "c": 2.10},
         {"T": "MULN", "h": 0.44, "c": 0.42},
     ],
     MON: [
         {"T": "FFIE", "h": 2.95, "c": 2.40},
+        {"T": "BBLGW", "h": 0.64, "c": 0.52},
         {"T": "SNDL", "h": 2.20, "c": 2.12},
         {"T": "MULN", "h": 4.60, "c": 4.31},
     ],
 }
+COMMON = ["FFIE", "MULN", "SNDL"]
 SPLITS = {MON: [{"ticker": "MULN", "execution_date": "2026-10-26", "split_from": 10, "split_to": 1}]}
 BAR = {"t": 1793021400000, "o": 2.10, "h": 2.30, "l": 2.05, "c": 2.25, "v": 184200, "vw": 2.19, "n": 512}
 
@@ -51,6 +54,10 @@ class FakeSource:
         self.calls.append(("splits", day))
         return SPLITS.get(day, [])
 
+    def common_stocks(self, day):
+        self.calls.append(("common", day))
+        return COMMON
+
 
 def fetch_monday(store: Store, source: FakeSource | None = None, **settings) -> dict | None:
     settings = {"rule": GapRule(), "per_day": 10, "seed": "s", **settings}
@@ -66,13 +73,24 @@ def test_a_monday_is_compared_with_the_previous_friday_close(tmp_path):
     assert picks["candidates"] == [{"ticker": "FFIE", "prev_close": 1.85, "high": 2.95, "gap": 0.5946}]
 
 
+def test_a_warrant_gapping_more_than_40_percent_is_not_a_candidate(tmp_path):
+    assert [c["ticker"] for c in fetch_monday(Store(tmp_path))["candidates"]] == ["FFIE"]
+
+
+def test_with_every_type_allowed_the_warrant_is_a_candidate_and_no_ticker_list_is_fetched(tmp_path):
+    source = FakeSource()
+    picks = fetch_monday(Store(tmp_path), source, rule=GapRule(common_only=False))
+    assert [c["ticker"] for c in picks["candidates"]] == ["BBLGW", "FFIE"]
+    assert ("common", MON) not in source.calls
+
+
 def test_a_ticker_whose_reverse_split_executes_that_day_is_not_picked(tmp_path):
     assert "MULN" not in fetch_monday(Store(tmp_path))["picked"]
 
 
 def test_the_picks_record_the_settings_that_produced_them(tmp_path):
     picks = fetch_monday(Store(tmp_path), seed="ts-analysis")
-    assert picks["rule"] == {"min_gap": 0.40, "min_prev_close": 0.30, "max_prev_close": 10.0}
+    assert picks["rule"] == {"min_gap": 0.40, "min_prev_close": 0.30, "max_prev_close": 10.0, "common_only": True}
     assert (picks["per_day"], picks["seed"]) == (10, "ts-analysis")
 
 
