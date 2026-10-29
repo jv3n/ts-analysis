@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ts-analysis monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>ts-analysis monitor</h1>
+    <span id="refreshed" class="muted"></span>
+  </header>
+
+  <main>
+    <section>
+      <h2>Progress</h2>
+      <div class="cards">
+        <article class="card" id="job-fetch"></article>
+        <article class="card" id="job-replay"></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Forecast</h2>
+      <form id="pick" class="filters">
+        <label>Model <select id="model"></select></label>
+        <label>Day <select id="day"></select></label>
+        <label>Ticker <select id="ticker"></select></label>
+        <label class="check"><input type="checkbox" id="compare" checked> random walk</label>
+      </form>
+      <div class="cut-row">
+        <button type="button" id="prev" aria-label="Previous cut">‹</button>
+        <input type="range" id="cut" min="0" max="0" value="0" aria-label="Cut">
+        <button type="button" id="next" aria-label="Next cut">›</button>
+        <output id="cut-label"></output>
+      </div>
+      <div id="chart" class="chart"></div>
+      <div id="legend" class="legend"></div>
+      <div id="band-table"></div>
+    </section>
+
+    <section>
+      <h2>Replay</h2>
+      <div id="replay"></div>
+    </section>
+
+    <section>
+      <h2>Fetch</h2>
+      <div id="fetch"></div>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

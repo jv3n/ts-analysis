@@ -1,7 +1,7 @@
 import argparse
 import logging
 import warnings
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date
 from pathlib import Path
 from statistics import NormalDist
@@ -13,6 +13,7 @@ import pandas as pd
 
 from ts_analysis.fetch import last_published_day, weekdays
 from ts_analysis.series import CLOSE, OPEN, Grid, clock_of, minute_grid
+from ts_analysis.status import Status
 from ts_analysis.store import Store
 
 log = logging.getLogger("ts_analysis.replay")
@@ -71,7 +72,13 @@ def cuts(step: int) -> range:
     return range(OPEN, CLOSE, step)
 
 
-def replay_day(day: date, grids: dict[str, Grid], models: Iterable[Forecaster], step: int) -> list[dict]:
+def replay_day(
+    day: date,
+    grids: dict[str, Grid],
+    models: Iterable[Forecaster],
+    step: int,
+    on_cut: Callable[[str, int, int], None] | None = None,
+) -> list[dict]:
     """Each model forecasts every ticker at every cut from what the cut sees; the grid is only read
     past the cut to score the forecast."""
     models = list(models)
@@ -83,6 +90,8 @@ def replay_day(day: date, grids: dict[str, Grid], models: Iterable[Forecaster], 
                 "%s   %s  %d/%d cuts, %d forecasts per model so far",
                 day, clock_of(cut), done - 1, len(day_cuts), len(rows) // len(models),
             )
+        if on_cut:
+            on_cut(clock_of(cut), done, len(day_cuts))
         seen = {ticker: grid.seen_at(cut) for ticker, grid in grids.items()}
         tickers = [ticker for ticker, grid in seen.items() if not np.isnan(grid.log_close[-1])]
         if not tickers:
@@ -131,24 +140,32 @@ def day_grids(store: Store, day: date) -> dict[str, Grid]:
 def replay(store: Store, start: date, end: date, models: list[Forecaster], step: int) -> None:
     days = list(weekdays(start, end))
     started = perf_counter()
-    for number, day in enumerate(days, 1):
-        todo = [model for model in models if not store.has_forecasts(model.name, day)]
-        if not todo:
-            log.info("%s day %d/%d already replayed", day, number, len(days))
-            continue
-        grids = day_grids(store, day)
-        if not grids:
-            log.info("%s day %d/%d no stored bars", day, number, len(days))
-            continue
-        log.info("%s day %d/%d %d tickers: %s", day, number, len(days), len(grids), " ".join(grids))
-        frame = pd.DataFrame(replay_day(day, grids, todo, step))
-        for model in todo:
-            rows = frame[frame["model"] == model.name]
-            store.save_forecasts(model.name, day, rows)
-            log.info(
-                "%s   %-16s %5d forecasts, %.1f ms each", day, model.name, len(rows), rows["ms_per_forecast"].mean()
-            )
-        log.info("%s day %d/%d done, %.0f s elapsed", day, number, len(days), perf_counter() - started)
+    info = {"start": start.isoformat(), "end": end.isoformat(), "days": len(days), "models": [m.name for m in models]}
+    with Status(store.root, "replay", **info) as status:
+        for number, day in enumerate(days, 1):
+            status.update(day=day.isoformat(), day_number=number, cut=None, cut_number=0, cuts=0)
+            todo = [model for model in models if not store.has_forecasts(model.name, day)]
+            if not todo:
+                log.info("%s day %d/%d already replayed", day, number, len(days))
+                continue
+            grids = day_grids(store, day)
+            if not grids:
+                log.info("%s day %d/%d no stored bars", day, number, len(days))
+                continue
+            log.info("%s day %d/%d %d tickers: %s", day, number, len(days), len(grids), " ".join(grids))
+
+            def on_cut(cut: str, done: int, total: int) -> None:
+                status.update(cut=cut, cut_number=done, cuts=total)
+
+            frame = pd.DataFrame(replay_day(day, grids, todo, step, on_cut))
+            for model in todo:
+                rows = frame[frame["model"] == model.name]
+                store.save_forecasts(model.name, day, rows)
+                log.info(
+                    "%s   %-16s %5d forecasts, %.1f ms each",
+                    day, model.name, len(rows), rows["ms_per_forecast"].mean(),
+                )
+            log.info("%s day %d/%d done, %.0f s elapsed", day, number, len(days), perf_counter() - started)
 
 
 def main(argv: list[str] | None = None) -> None:

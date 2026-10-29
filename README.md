@@ -107,6 +107,24 @@ by model:
 - **calibration**: the real price inside the 10–90 % band (80 % expected), and the share below each
   quantile.
 
+## Monitor
+
+```bash
+uv run ts-monitor   # http://localhost:8765, --port to change it
+```
+
+A local page to follow the runs without reading logs or parquet files, served from `projects/monitor/`
+(plain HTML, CSS and JavaScript, no build step) on `localhost` only:
+
+- **progress**: where a running `ts-fetch` or `ts-replay` is (day, ticker or cut), refreshed every
+  2 s from `data/status/<job>.json`. A job killed without writing its end shows as **lost**;
+- **forecast**: for a model, a day and a ticker, the price through the session with a cut's 10–90 %
+  and 25–75 % bands drawn ahead of it, the random walk's band next to it, and whether the real price
+  landed inside;
+- **replay**: the forecasts per day and model, and the time per forecast;
+- **fetch**: the stored days, their candidates and picks, the bars per ticker, and the weekdays
+  missing from the range.
+
 ## Later
 
 - A web view that replays a day as if it were live: the candles minute by minute, the forecast band

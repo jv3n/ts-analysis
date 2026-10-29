@@ -76,6 +76,15 @@ class Store:
     def load_forecasts(self, model: str, day: date) -> pd.DataFrame:
         return pd.read_parquet(self.forecasts_path(model, day))
 
+    def days(self, kind: str) -> list[date]:
+        return sorted(date.fromisoformat(path.stem) for path in (self.root / kind).glob("*.json"))
+
+    def models(self) -> list[str]:
+        return sorted(path.name for path in (self.root / "forecasts").glob("*") if path.is_dir())
+
+    def forecast_days(self, model: str) -> list[date]:
+        return sorted(date.fromisoformat(path.stem) for path in (self.root / "forecasts" / model).glob("*.parquet"))
+
 
 def _read_json(path: Path):
     return json.loads(path.read_text()) if path.exists() else None

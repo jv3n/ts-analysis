@@ -13,6 +13,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from ts_analysis.massive import DayNotPublished, MassiveClient
 from ts_analysis.selection import GapRule, gap_candidates, sample
+from ts_analysis.status import Status
 from ts_analysis.store import Store
 
 log = logging.getLogger("ts_analysis.fetch")
@@ -99,7 +100,7 @@ def check_settings(picks: dict, rule: GapRule, per_day: int, seed: str) -> None:
 
 
 def fetch_day(
-    source: Source, store: Store, day: date, rule: GapRule, per_day: int, seed: str
+    source: Source, store: Store, day: date, rule: GapRule, per_day: int, seed: str, status: Status | None = None
 ) -> dict | None:
     """Picks the day's tickers once, then fetches whatever bars are missing, so a rerun resumes."""
     picks = store.load_picks(day)
@@ -113,6 +114,8 @@ def fetch_day(
     picked = picks["picked"]
     log.info("%s %d candidates, %d picked: %s", day, len(picks["candidates"]), len(picked), " ".join(picked))
     for number, ticker in enumerate(picked, 1):
+        if status:
+            status.update(ticker=ticker, ticker_number=number, tickers=len(picked))
         if store.has_bars(day, ticker):
             log.info("%s   %2d/%d %-6s already stored", day, number, len(picked), ticker)
             continue
@@ -127,17 +130,22 @@ def backfill(
 ) -> None:
     days = list(weekdays(start, end))
     started = time.monotonic()
-    for number, day in enumerate(days, 1):
-        log.info("%s day %d/%d", day, number, len(days))
-        try:
-            picks = fetch_day(source, store, day, rule, per_day, seed)
-        except DayNotPublished:
-            log.info("%s not published yet, it opens after midnight ET: stopping", day)
-            return
-        if picks is None:
-            log.info("%s market holiday", day)
-        else:
-            log.info("%s day %d/%d done, %.0f min elapsed", day, number, len(days), (time.monotonic() - started) / 60)
+    with Status(store.root, "fetch", start=start.isoformat(), end=end.isoformat(), days=len(days)) as status:
+        for number, day in enumerate(days, 1):
+            log.info("%s day %d/%d", day, number, len(days))
+            status.update(day=day.isoformat(), day_number=number, ticker=None, ticker_number=0, tickers=0)
+            try:
+                picks = fetch_day(source, store, day, rule, per_day, seed, status)
+            except DayNotPublished:
+                log.info("%s not published yet, it opens after midnight ET: stopping", day)
+                status.update(note=f"{day} not published yet")
+                return
+            if picks is None:
+                log.info("%s market holiday", day)
+            else:
+                log.info(
+                    "%s day %d/%d done, %.0f min elapsed", day, number, len(days), (time.monotonic() - started) / 60
+                )
 
 
 def last_published_day() -> date:
