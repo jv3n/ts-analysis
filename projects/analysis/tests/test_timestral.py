@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from ts_analysis.replay import PRICE_FLOOR, QUANTILES, Timestral
+from ts_analysis.series import CLOSE, OPEN
 
 
 @dataclass
@@ -19,8 +20,17 @@ class FakeTimestral:
         self.price = price
         self.calls: list[dict] = []
 
-    def forecast(self, context, prediction_length, past_covariates, clip_nonnegative):
-        self.calls.append({"context": context.copy(), "clip_nonnegative": clip_nonnegative})
+    def forecast(
+        self, context, prediction_length, past_covariates, known_covariates, clip_nonnegative, symmetric_averaging
+    ):
+        self.calls.append(
+            {
+                "context": context.copy(),
+                "known": known_covariates,
+                "clip_nonnegative": clip_nonnegative,
+                "symmetric_averaging": symmetric_averaging,
+            }
+        )
         value = self.price if np.nanmax(context) > 1.5 else np.log(self.price)
         return Out(np.full((len(context), 1, prediction_length, len(QUANTILES)), value))
 
@@ -70,3 +80,34 @@ def test_the_wrapping_never_rewrites_the_grid_it_was_given():
     before = LOG_CLOSE.copy()
     wrapped("raw-nan")
     np.testing.assert_array_equal(LOG_CLOSE, before)
+
+
+def test_the_clock_covers_the_context_and_the_horizon_from_0_at_the_open_to_the_last_minute():
+    fake = FakeTimestral()
+    log_close = np.log(np.full((2, OPEN), 2.40))  # BEAT and APUS cut at 9:30
+    Timestral("28M", "clock", model=fake).forecast(log_close, np.full((2, OPEN), 1000.0), length=CLOSE - OPEN)
+    known = fake.calls[0]["known"]
+    assert known.shape == (2, 1, CLOSE)
+    assert (known[:, 0, OPEN], known[:, 0, -1]) == (pytest.approx(0.0), pytest.approx(389 / 390))
+    assert known[0, 0, 0] < 0  # 4:00, before the open
+
+
+def test_the_clock_holds_only_the_time_never_a_price():
+    fake = FakeTimestral()
+    log_close = np.log(np.array([[2.40, 2.52, 2.46], [0.61, 0.58, 0.64]]))
+    Timestral("28M", "clock", model=fake).forecast(log_close, np.ones((2, 3)), length=5)
+    known = fake.calls[0]["known"]
+    np.testing.assert_array_equal(known[0], known[1])
+
+
+def test_without_the_clock_no_known_covariate_reaches_the_model():
+    assert wrapped("log-capped")[0].calls[0]["known"] is None
+
+
+def test_the_asym_wrappings_turn_the_symmetric_averaging_off_and_the_others_keep_it():
+    assert [wrapped(w)[0].calls[0]["symmetric_averaging"] for w in ("log-capped", "clock", "asym", "clock-asym")] == [
+        True,
+        True,
+        False,
+        False,
+    ]

@@ -87,6 +87,13 @@ up: on October the original wrapping, `log` (`timestral-28M`), gave 1,252 foreca
 only move the blow-up below zero, where the clip floors it; a raw quantile clipped to 0 reads as a
 price of $0.0001. They stay to reproduce the measure.
 
+On top of `log-capped` ([#24](https://github.com/jv3n/ts-analysis/issues/24)): `clock` gives Timestral
+the time of day as a known covariate (the share of the session elapsed, 0 at 9:30, 1 at 16:00), since
+intraday volatility follows a U; `asym` turns its symmetric averaging off, which otherwise makes a
+fading pump and a rebounding crash mirror images; `clock-asym` does both. On October none beat
+`log-capped`: the clock changes nothing in any slot of the day, and without the symmetric averaging
+every horizon gets worse. They stay to reproduce the measure.
+
 The first run downloads the weights from Hugging Face. A day already replayed for a model is
 skipped, so a rerun resumes.
 
