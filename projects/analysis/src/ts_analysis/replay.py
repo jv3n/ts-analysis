@@ -98,7 +98,8 @@ def replay_day(day: date, grids: dict[str, Grid], models: Iterable[Forecaster], 
             for i, ticker in enumerate(tickers):
                 last = log_close[i, -1]
                 for h in horizons:
-                    moves = np.expm1(predicted[i, h - 1] - last)
+                    # Log moves: the long-horizon upper tail is wide in log space, and exp blows it up.
+                    moves = predicted[i, h - 1] - last
                     rows.append(
                         {
                             "model": model.name,
