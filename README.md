@@ -92,7 +92,7 @@ tail is wide in log space, and turned into a price it reaches absurd values (×6
 ## Score
 
 ```bash
-uv run ts-score   # --call 0.05: the median move that makes a call
+uv run ts-score   # --call 0.05: the median move that makes a call; --big 0.05: the real move that makes a big one
 ```
 
 Reads every stored forecast and writes `data/reports/score.md`, by horizon (+5, +15, +30, close) and
@@ -105,7 +105,10 @@ by model:
 - **calls**: the median says 5 % or more, or the band sits wholly on one side of 0 (90 % sure), and
   how often the price went that way;
 - **calibration**: the real price inside the 10–90 % band (80 % expected), and the share below each
-  quantile.
+  quantile;
+- **big moves**: the cuts followed by a real move of 5 % or more, picked on the real move only: did
+  the median lean the right way (also on the cuts where the move had not started yet), and was the
+  band wider than the ticker-day's usual one just before?
 
 ## Monitor
 

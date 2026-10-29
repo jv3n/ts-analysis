@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from ts_analysis.replay import QUANTILES
-from ts_analysis.score import COLUMNS, main, pinball, quantile_coverage, report, scoreboard, with_outcome
+from ts_analysis.score import COLUMNS, big_moves, main, pinball, quantile_coverage, report, scoreboard, with_outcome
 
 
 def forecast(model: str, actual: float, band: tuple[float, float, float], horizon: int = 15, to_close: bool = False):
@@ -79,3 +79,60 @@ def test_the_cli_says_to_replay_first_when_there_is_no_forecast(tmp_path, capsys
     with pytest.raises(SystemExit):
         main(["--data", str(tmp_path)])
     assert "run ts-replay first" in capsys.readouterr().err
+
+
+def at(cut: str, last: float, actual: float, band: tuple[float, float, float], model: str = "timestral-28M") -> dict:
+    return forecast(model, actual, band) | {"cut": cut, "last": last}
+
+
+def big_row(rows: list[dict], model: str = "timestral-28M") -> pd.Series:
+    board = big_moves(pd.DataFrame(rows), big=0.05)
+    return board[board["model"] == model].iloc[0]
+
+
+def test_a_big_move_is_picked_on_the_real_move_never_on_the_forecast():
+    rows = [
+        at("10:00", 2.40, 2.42, (-0.50, -0.30, 0.50)),  # the model screams, the price barely moves
+        at("10:05", 2.42, 2.66, (-0.01, 0.0, 0.01)),  # the model shrugs, the price jumps 10 %
+    ]
+    row = big_row(rows)
+    assert (row["cuts"], row["big"], row["big_share"]) == (2, 1, 0.5)
+
+
+def test_a_big_drop_counts_as_much_as_a_big_rise():
+    rows = [at("10:00", 2.40, 2.25, (-0.10, -0.02, 0.05)), at("10:05", 2.25, 2.40, (-0.05, 0.02, 0.10))]
+    row = big_row(rows)
+    assert (row["big"], row["big_down"]) == (2, 0.5)
+
+
+def test_a_median_leaning_the_way_of_the_big_move_is_a_hit():
+    rows = [at("10:00", 2.40, 2.16, (-0.15, -0.02, 0.05)), at("10:05", 2.16, 2.40, (-0.15, -0.02, 0.05))]
+    assert big_row(rows)["lean_hit"] == 0.5
+
+
+def test_a_flat_median_does_not_lean_so_a_baseline_has_no_lean_hit():
+    rows = [at("10:00", 2.40, 2.16, (-0.05, 0.0, 0.05), model="random-walk")]
+    assert np.isnan(big_row(rows, model="random-walk")["lean_hit"])
+
+
+def test_a_big_move_already_under_way_at_the_cut_is_not_quiet():
+    rows = [
+        at("11:35", 2.40, 2.41, (-0.05, 0.01, 0.05)),
+        at("11:40", 2.41, 2.46, (-0.05, 0.01, 0.05)),
+        at("11:45", 2.46, 2.75, (-0.05, 0.03, 0.15)),  # +2.1 % since 11:40, under half of 5 %: still quiet
+        at("11:50", 2.75, 3.05, (-0.05, 0.03, 0.15)),  # +11.8 % since 11:45: the move is under way
+    ]
+    row = big_row(rows)
+    assert (row["big"], row["quiet"], row["quiet_hit"]) == (2, 1, 1.0)
+
+
+def test_a_band_wider_than_the_ticker_day_s_usual_one_before_a_big_move_reads_above_1():
+    usual = [at(f"10:{m:02d}", 2.40, 2.41, (-0.05, 0.0, 0.05)) for m in (0, 5, 10, 15)]
+    wide = at("10:20", 2.40, 2.70, (-0.10, 0.01, 0.12))
+    row = big_row([*usual, wide])
+    assert row["width_big"] > 2 and row["width_rest"] == pytest.approx(1.0)
+
+
+def test_the_report_has_a_big_moves_section():
+    rows = [at("10:00", 2.40, 2.66, (-0.05, 0.01, 0.05)), at("10:00", 2.40, 2.66, (-0.05, 0.0, 0.05), model="random-walk")]
+    assert "## Big moves" in report(pd.DataFrame(rows), 0.05, 0.05)
