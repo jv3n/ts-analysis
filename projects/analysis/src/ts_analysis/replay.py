@@ -67,6 +67,8 @@ class Wrapping:
     nan_holes: bool = False
     clip_nonnegative: bool = True
     cap_k: float = 1e4
+    clock: bool = False
+    symmetric: bool = True
 
 
 WRAPPINGS = {
@@ -75,7 +77,18 @@ WRAPPINGS = {
     "raw-nan": Wrapping(raw=True, nan_holes=True),
     # The one kept after #21: on October it cut the forecasts beyond x150 from 1,252 to 30, at no cost.
     "log-capped": Wrapping(clip_nonnegative=False, cap_k=10.0),
+    "clock": Wrapping(clip_nonnegative=False, cap_k=10.0, clock=True),
+    # Symmetric averaging makes the forecast odd by construction: a fading pump and a rebounding
+    # crash get mirrored answers, and that asymmetry is what gap-ups are about.
+    "asym": Wrapping(clip_nonnegative=False, cap_k=10.0, symmetric=False),
+    "clock-asym": Wrapping(clip_nonnegative=False, cap_k=10.0, clock=True, symmetric=False),
 }
+
+
+def session_clock(steps: int) -> np.ndarray:
+    """The share of the session elapsed at each grid slot: 0 at 9:30, 1 at 16:00, negative before the
+    open. The grid starts at 4:00 for every ticker, so the slot index is the clock."""
+    return (np.arange(steps) - OPEN) / (CLOSE - OPEN)
 
 
 class Timestral:
@@ -94,11 +107,17 @@ class Timestral:
         context = np.exp(log_close) if self.wrapping.raw else log_close.copy()
         if self.wrapping.nan_holes:
             context[volume == 0] = np.nan
+        known = None
+        if self.wrapping.clock:
+            clock = session_clock(context.shape[1] + length)
+            known = np.broadcast_to(clock, (len(context), 1, len(clock))).copy()
         out = self._model.forecast(
             context[:, None, :],
             prediction_length=length,
             past_covariates=np.log1p(volume)[:, None, :],
+            known_covariates=known,
             clip_nonnegative=self.wrapping.clip_nonnegative,
+            symmetric_averaging=self.wrapping.symmetric,
         )
         if not np.allclose(out.quantile_levels, QUANTILES):
             raise ValueError(f"Unexpected quantile levels {out.quantile_levels}")
