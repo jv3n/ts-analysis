@@ -2,6 +2,7 @@ import argparse
 import logging
 import warnings
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from statistics import NormalDist
@@ -52,20 +53,57 @@ class RandomWalk:
         return log_close[:, -1, None, None] + sigma[:, None, None] * steps[None, :, None] * z[None, None, :]
 
 
-class Timestral:
-    def __init__(self, size: str):
-        from timestral import TimestralForecaster
+# A raw-price quantile clipped to 0 still needs a log: below a hundredth of a cent the name is gone.
+PRICE_FLOOR = 1e-4
 
-        self.name = f"timestral-{size}"
-        self._model = TimestralForecaster.from_pretrained(f"mistralai/Timestral-{size}")
+
+@dataclass(frozen=True)
+class Wrapping:
+    """How the grid reaches Timestral. Timestral scales each series with asinh and inverts it with sinh,
+    so on log prices its tails are exponential twice over; and its non-negative clip, meant for prices,
+    floors a log price at 0, i.e. a price at $1."""
+
+    raw: bool = False
+    nan_holes: bool = False
+    clip_nonnegative: bool = True
+    cap_k: float = 1e4
+
+
+WRAPPINGS = {
+    "log": Wrapping(),
+    "raw": Wrapping(raw=True),
+    "raw-nan": Wrapping(raw=True, nan_holes=True),
+    # The one kept after #21: on October it cut the forecasts beyond x150 from 1,252 to 30, at no cost.
+    "log-capped": Wrapping(clip_nonnegative=False, cap_k=10.0),
+}
+
+
+class Timestral:
+    def __init__(self, size: str, wrapping: str = "log", model=None):
+        self.name = f"timestral-{size}" if wrapping == "log" else f"timestral-{size}-{wrapping}"
+        self.wrapping = WRAPPINGS[wrapping]
+        if model is None:
+            from timestral import TimestralForecaster
+
+            model = TimestralForecaster.from_pretrained(
+                f"mistralai/Timestral-{size}", quantile_real_cap_k=self.wrapping.cap_k
+            )
+        self._model = model
 
     def forecast(self, log_close: np.ndarray, volume: np.ndarray, length: int) -> np.ndarray:
+        context = np.exp(log_close) if self.wrapping.raw else log_close.copy()
+        if self.wrapping.nan_holes:
+            context[volume == 0] = np.nan
         out = self._model.forecast(
-            log_close[:, None, :], prediction_length=length, past_covariates=np.log1p(volume)[:, None, :]
+            context[:, None, :],
+            prediction_length=length,
+            past_covariates=np.log1p(volume)[:, None, :],
+            clip_nonnegative=self.wrapping.clip_nonnegative,
         )
         if not np.allclose(out.quantile_levels, QUANTILES):
             raise ValueError(f"Unexpected quantile levels {out.quantile_levels}")
-        return np.asarray(out.quantiles)[:, 0]
+        quantiles = np.asarray(out.quantiles, dtype="float64")[:, 0]
+        return np.log(np.maximum(quantiles, PRICE_FLOOR)) if self.wrapping.raw else quantiles
 
 
 def cuts(step: int) -> range:
@@ -174,6 +212,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--end", type=date.fromisoformat, default=last_published_day())
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--model", default="28M", choices=["5M", "28M", "123M", "209M"])
+    parser.add_argument("--wrapping", default="log-capped", choices=list(WRAPPINGS), help="how the prices reach Timestral")
     parser.add_argument("--step", type=int, default=5, help="minutes between two cuts")
     args = parser.parse_args(argv)
     if args.start > args.end:
@@ -181,9 +220,9 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    log.info("loading Timestral-%s (downloaded from Hugging Face on the first run)", args.model)
+    log.info("loading Timestral-%s, %s wrapping (downloaded from Hugging Face on the first run)", args.model, args.wrapping)
     started = perf_counter()
-    model = Timestral(args.model)
+    model = Timestral(args.model, args.wrapping)
     log.info("loaded in %.1f s", perf_counter() - started)
     replay(Store(args.data), args.start, args.end, [Flat(), RandomWalk(), model], args.step)
 

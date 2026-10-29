@@ -78,6 +78,15 @@ close and volume 0, as log prices with the volume as a past covariate. It foreca
 +30 min and the close**, on 21 quantiles. Two baselines forecast the same cuts: **flat** (the last
 price) and a **random walk** at the last hour's volatility.
 
+`--wrapping` sets how the prices reach Timestral, each stored under its own model name
+([#21](https://github.com/jv3n/ts-analysis/issues/21)). The default is **`log-capped`** (log prices,
+no non-negative clip, quantiles capped at 10 stds beyond the context's range,
+`timestral-28M-log-capped`). Timestral inverts its scaling with `sinh`, so its uncapped tails blow
+up: on October the original wrapping, `log` (`timestral-28M`), gave 1,252 forecasts beyond ×150,
+`log-capped` 30. `raw` (raw prices) and `raw-nan` (raw prices, minutes with no trade left missing)
+only move the blow-up below zero, where the clip floors it; a raw quantile clipped to 0 reads as a
+price of $0.0001. They stay to reproduce the measure.
+
 The first run downloads the weights from Hugging Face. A day already replayed for a model is
 skipped, so a rerun resumes.
 
