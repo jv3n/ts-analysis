@@ -91,7 +91,8 @@ projects/analysis/          # the Python project: pyproject.toml, uv.lock, data/
 │   ├── store.py            # data/ layout
 │   ├── fetch.py            # backfill orchestration + `ts-fetch` CLI
 │   ├── series.py           # minute grid: holes filled, log prices, what a cut sees (pure)
-│   └── replay.py           # cuts, baselines, Timestral + `ts-replay` CLI
+│   ├── replay.py           # cuts, baselines, Timestral + `ts-replay` CLI
+│   └── score.py            # pinball, direction, calls, calibration + `ts-score` CLI (pure)
 └── tests/
 devops/                     # README (index) + docs/github.md: merge rules, master protection, hook, CI
 ```
@@ -103,6 +104,7 @@ uv sync                                               # install, creates .venv
 uv run pytest                                         # tests
 uv run ts-fetch --start 2026-10-01 --end 2026-10-27   # backfill; --end defaults to yesterday ET
 uv run ts-replay --start 2026-10-01 --end 2026-10-27  # forecasts → data/forecasts/<model>/<day>.parquet
+uv run ts-score                                       # report → data/reports/score.md
 ```
 
 `ts-fetch` is resumable: rerun the same command after an interruption, it makes no request for

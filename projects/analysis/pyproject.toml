@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 ts-fetch = "ts_analysis.fetch:main"
 ts-replay = "ts_analysis.replay:main"
+ts-score = "ts_analysis.score:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

@@ -83,8 +83,29 @@ skipped, so a rerun resumes.
 
 ```
 data/forecasts/<model>/<day>.parquet   # model, ticker, day, cut, horizon, to_close, last, actual,
-                                       # q01…q99 (predicted move: 0.10 = +10 %), ms_per_forecast
+                                       # q01…q99 (log move: log(price / last)), ms_per_forecast
 ```
+
+The quantiles are kept as log moves, the scale the model forecasts in: at long horizons the upper
+tail is wide in log space, and turned into a price it reaches absurd values (×6,000 at q99).
+
+## Score
+
+```bash
+uv run ts-score   # --call 0.05: the median move that makes a call
+```
+
+Reads every stored forecast and writes `data/reports/score.md`, by horizon (+5, +15, +30, close) and
+by model:
+
+- **accuracy**: the pinball loss (mean quantile loss on log moves) and its **skill** against the
+  random walk, above 0 beats it; the mean and median error of the median;
+- **direction**: the median and the real move of the same sign, against the share of real moves
+  down, the bar a call has to clear;
+- **calls**: the median says 5 % or more, or the band sits wholly on one side of 0 (90 % sure), and
+  how often the price went that way;
+- **calibration**: the real price inside the 10–90 % band (80 % expected), and the share below each
+  quantile.
 
 ## Later
 

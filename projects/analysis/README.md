@@ -17,3 +17,7 @@ cd ~/dev/ts-analysis/projects/analysis && uv run ts-fetch --start 2026-10-01
 ```bash
 cd ~/dev/ts-analysis/projects/analysis && uv run ts-replay --start 2026-10-01 --end 2026-10-01
 ```
+
+```bash
+cd ~/dev/ts-analysis/projects/analysis && uv run ts-score
+```
