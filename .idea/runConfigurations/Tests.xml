@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Tests" type="ShConfigurationType">
+  <configuration default="false" name="Tests" type="ShConfigurationType" folderName="Setup">
     <option name="SCRIPT_TEXT" value="wsl.exe -d Ubuntu --cd /home/Me/dev/ts-analysis/projects/analysis -- bash -lc &quot;uv run pytest&quot;" />
     <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
     <option name="SCRIPT_PATH" value="" />
