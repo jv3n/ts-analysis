@@ -143,7 +143,8 @@ day J is learned from the days before J only:
 The corrected forecasts go to `data/forecasts/<model>-cal/`, scored by `ts-score` like any model, so
 the correction has to earn its place against the raw model and the baselines. Every stored model is
 corrected except `flat`, which has no band, the random walk included: a calibrated random walk is the
-fair baseline for a calibrated Timestral. A day with fewer than 5 days before it is left out, and the
+fair baseline for a calibrated Timestral. Like the score, it learns from the cuts after the ticker
+reached its gap only (`--all-cuts` to keep them all). A day with fewer than 5 days before it is left out, and the
 `-cal` folders are rebuilt whole on each run.
 
 ## Score
@@ -154,7 +155,14 @@ uv run ts-score --start 2026-10-28 --end 2026-11-04   # only those days, e.g. a 
 ```
 
 Reads every stored forecast and writes `data/reports/score.md`, by horizon (+5, +15, +30, close) and
-by model:
+by model.
+
+Only the cuts made **after the ticker reached its gap** are scored
+([#37](https://github.com/jv3n/ts-analysis/issues/37)). A ticker is picked on the day's high, known at
+the close, so at a cut before its first bar at +40 % the pick itself tells the future: on October,
+82 % of those cuts ended higher at the close, by +13 % at the median, against a coin flip after. The
+entry minute is that first bar's, from the picks and the stored bars, and a cut sees it once it has
+closed. `--all-cuts` keeps every cut, to reproduce the earlier figures.
 
 - **accuracy**: the pinball loss (mean quantile loss on log moves) and its **skill** against the
   random walk, above 0 beats it; the mean and median error of the median;

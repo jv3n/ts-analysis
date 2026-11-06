@@ -97,7 +97,7 @@ def test_the_cli_writes_the_corrected_days_next_to_the_raw_model(tmp_path):
     folder.mkdir(parents=True)
     for day in DAYS[:6]:
         pd.DataFrame(session(day)).to_parquet(folder / f"{day}.parquet", index=False)
-    main(["--data", str(tmp_path)])
+    main(["--data", str(tmp_path), "--all-cuts"])
     assert [p.name for p in (tmp_path / "forecasts" / "timestral-28M-cal").glob("*.parquet")] == [f"{DAYS[5]}.parquet"]
 
 
@@ -107,5 +107,5 @@ def test_the_cli_never_corrects_the_flat_baseline_or_a_corrected_model(tmp_path)
         folder.mkdir(parents=True)
         for day in DAYS[:6]:
             pd.DataFrame([r | {"model": model} for r in session(day)]).to_parquet(folder / f"{day}.parquet", index=False)
-    main(["--data", str(tmp_path)])
+    main(["--data", str(tmp_path), "--all-cuts"])
     assert sorted(p.name for p in (tmp_path / "forecasts").iterdir()) == ["flat", "timestral-28M-cal"]
