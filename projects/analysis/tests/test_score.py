@@ -216,7 +216,7 @@ def test_the_cli_scores_only_the_days_between_start_and_end(tmp_path, capsys):
     for day in ("2026-10-27", "2026-10-28"):
         row = on("FFIE", day, "10:00", forecast("random-walk", 2.30, (-0.05, 0.0, 0.05)))
         pd.DataFrame([row]).to_parquet(folder / f"{day}.parquet", index=False)
-    main(["--data", str(tmp_path), "--start", "2026-10-28", "--resamples", "10"])
+    main(["--data", str(tmp_path), "--start", "2026-10-28", "--resamples", "10", "--all-cuts"])
     assert "1 days, 1 ticker-days, 1 forecasts" in capsys.readouterr().out
 
 

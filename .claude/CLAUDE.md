@@ -93,6 +93,7 @@ projects/analysis/          # the Python project: pyproject.toml, uv.lock, data/
 │   ├── series.py           # minute grid: holes filled, log prices, what a cut sees (pure)
 │   ├── replay.py           # cuts, baselines, Timestral + `ts-replay` CLI
 │   ├── calibrate.py        # walk-forward shift and band correction + `ts-calibrate` CLI (pure)
+│   ├── entry.py            # the minute a ticker reaches its gap; the cuts made after it (pure)
 │   ├── score.py            # pinball, direction, calls, calibration + `ts-score` CLI (pure)
 │   ├── status.py           # progress file of a running ts-fetch / ts-replay
 │   └── monitor.py          # JSON endpoints + `ts-monitor` server, localhost only

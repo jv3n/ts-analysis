@@ -5,7 +5,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ts_analysis.entry import after_entry, entries
 from ts_analysis.replay import QUANTILES
+from ts_analysis.store import Store
 
 COLUMNS = [f"q{round(q * 100):02d}" for q in QUANTILES]
 BUCKETS = ["5", "15", "30", "close"]
@@ -285,7 +287,9 @@ def _spans(board: pd.DataFrame, names: dict[str, str]) -> pd.DataFrame:
     return board
 
 
-def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: int = 1000, seed: int = 0) -> str:
+def report(
+    forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: int = 1000, seed: int = 0, scope: str = "every cut"
+) -> str:
     pct = "{:.1%}"
     spans = intervals(forecasts, call, resamples, seed)
     spans = _spans(
@@ -310,7 +314,7 @@ def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: i
     return "\n\n".join(
         [
             "# Score",
-            f"{days} days, {tickers} ticker-days, {len(forecasts)} forecasts. "
+            f"{days} days, {tickers} ticker-days, {len(forecasts)} forecasts, on {scope}. "
             "Moves are log returns from the last price at the cut, the scale the model forecasts in; "
             "`mae` and the calls' `real` read as %. "
             f"`*_95`: 95 % interval over {resamples} resamples of the ticker-days (seed {seed}), the unit the "
@@ -369,6 +373,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--end", type=date.fromisoformat, help="last day scored")
     parser.add_argument("--resamples", type=int, default=1000, help="bootstrap resamples of the ticker-days")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--all-cuts", action="store_true", help="keep the cuts before the ticker reached its gap, which read the future"
+    )
     args = parser.parse_args(argv)
 
     forecasts = load_forecasts(args.data)
@@ -379,7 +386,14 @@ def main(argv: list[str] | None = None) -> None:
     forecasts = forecasts[(day >= start.isoformat()) & (day <= end.isoformat())]
     if forecasts.empty:
         parser.exit(1, "error: no forecasts between --start and --end\n")
-    text = report(forecasts, args.call, args.big, args.resamples, args.seed)
+    scope = "every cut"
+    if not args.all_cuts:
+        kept = after_entry(forecasts, entries(Store(args.data)))
+        scope = f"the cuts after the ticker reached its gap, {len(kept)} of {len(forecasts)}"
+        forecasts = kept
+        if forecasts.empty:
+            parser.exit(1, "error: no cut after a ticker reached its gap, --all-cuts to keep them all\n")
+    text = report(forecasts, args.call, args.big, args.resamples, args.seed, scope)
     path = args.data / "reports" / "score.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")

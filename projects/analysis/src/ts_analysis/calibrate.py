@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ts_analysis.entry import after_entry, entries
 from ts_analysis.score import COLUMNS, load_forecasts, with_outcome
 from ts_analysis.store import Store
 
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", action="append", help="model to correct, repeatable; every stored one by default")
     parser.add_argument("--min-days", type=int, default=MIN_DAYS, help="past days needed before a day is corrected")
     parser.add_argument("--window", type=int, help="learn from the last N days only; all past days by default")
+    parser.add_argument(
+        "--all-cuts", action="store_true", help="keep the cuts before the ticker reached its gap, which read the future"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -78,6 +82,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.exit(1, f"error: no forecasts for {' '.join(unknown)}\n")
 
     store = Store(args.data)
+    if not args.all_cuts:
+        forecasts = after_entry(forecasts, entries(store))
     for model in models:
         result = calibrate(forecasts[forecasts["model"] == model], args.min_days, args.window)
         target = store.root / "forecasts" / (model + SUFFIX)
