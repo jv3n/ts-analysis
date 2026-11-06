@@ -21,11 +21,19 @@ class FakeTimestral:
         self.calls: list[dict] = []
 
     def forecast(
-        self, context, prediction_length, past_covariates, known_covariates, clip_nonnegative, symmetric_averaging
+        self,
+        context,
+        prediction_length,
+        observation_mask,
+        past_covariates,
+        known_covariates,
+        clip_nonnegative,
+        symmetric_averaging,
     ):
         self.calls.append(
             {
                 "context": context.copy(),
+                "mask": observation_mask,
                 "known": known_covariates,
                 "clip_nonnegative": clip_nonnegative,
                 "symmetric_averaging": symmetric_averaging,
@@ -123,3 +131,31 @@ def test_the_asym_wrappings_turn_the_symmetric_averaging_off_and_the_others_keep
         False,
         False,
     ]
+
+
+def test_the_mask_is_false_on_the_minutes_without_trade_and_true_on_the_traded_ones():
+    fake, _ = wrapped("log-capped-mask")
+    np.testing.assert_array_equal(fake.calls[0]["mask"][:, 0], [[False, True, True, False, True]])
+
+
+def test_the_mask_leaves_the_carried_prices_in_the_context():
+    fake, _ = wrapped("log-capped-mask")
+    np.testing.assert_array_equal(fake.calls[0]["context"][:, 0], LOG_CLOSE)
+
+
+def test_over_past_sessions_the_mask_marks_a_missing_session_and_the_overnight_as_not_traded():
+    # BEAT: a session it did not trade (NaN, volume 0), Friday's close at $2.40 carried into Monday's 4:00, then $2.52.
+    log_close = np.log(np.array([[np.nan, np.nan, 2.40, 2.40, 2.40, 2.52]]))
+    volume = np.array([[0.0, 0, 12_000, 0, 0, 7_300]])
+    fake = FakeTimestral()
+    Timestral("28M", "log-capped-mask", past_days=1, model=fake).forecast(log_close, volume, length=5)
+    np.testing.assert_array_equal(fake.calls[0]["mask"][0, 0], [False, False, True, False, False, True])
+
+
+def test_without_the_mask_wrapping_no_observation_mask_reaches_the_model():
+    assert [wrapped(w)[0].calls[0]["mask"] for w in ("log", "raw-nan", "log-capped", "clock")] == [None] * 4
+
+
+def test_the_masked_wrapping_is_stored_under_its_own_model_name():
+    model = Timestral("28M", "log-capped-mask", past_days=5, model=FakeTimestral())
+    assert model.name == "timestral-28M-log-capped-mask-past5"

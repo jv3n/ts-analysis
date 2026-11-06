@@ -69,6 +69,7 @@ class Wrapping:
     cap_k: float = 1e4
     clock: bool = False
     symmetric: bool = True
+    mask: bool = False
 
 
 WRAPPINGS = {
@@ -82,6 +83,8 @@ WRAPPINGS = {
     # crash get mirrored answers, and that asymmetry is what gap-ups are about.
     "asym": Wrapping(clip_nonnegative=False, cap_k=10.0, symmetric=False),
     "clock-asym": Wrapping(clip_nonnegative=False, cap_k=10.0, clock=True, symmetric=False),
+    # The minutes without a trade carry the last price; the mask tells Timestral they were not traded.
+    "log-capped-mask": Wrapping(clip_nonnegative=False, cap_k=10.0, mask=True),
 }
 
 
@@ -117,6 +120,7 @@ class Timestral:
         out = self._model.forecast(
             context[:, None, :],
             prediction_length=length,
+            observation_mask=(volume > 0)[:, None, :] if self.wrapping.mask else None,
             past_covariates=np.log1p(volume)[:, None, :],
             known_covariates=known,
             clip_nonnegative=self.wrapping.clip_nonnegative,
@@ -249,7 +253,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--wrapping", default="log-capped", choices=list(WRAPPINGS), help="how the prices reach Timestral")
     parser.add_argument("--step", type=int, default=5, help="minutes between two cuts")
     parser.add_argument(
-        "--past-days", type=int, default=0, choices=range(PAST_SESSIONS + 1), help="sessions before the day in the context"
+        "--past-days", type=int, default=PAST_SESSIONS, choices=range(PAST_SESSIONS + 1),
+        help="sessions before the day in the context"
     )
     args = parser.parse_args(argv)
     if args.start > args.end:
