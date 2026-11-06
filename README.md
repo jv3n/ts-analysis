@@ -174,6 +174,12 @@ rates get a **95 % interval** from a bootstrap over the ticker-days (`--resample
 every model resampled on the same draws, so a `skill_95` wholly above 0 beats the random walk. The
 calls also say how many ticker-days they came from.
 
+Once `ts-calibrate` has run, `skill_cal` sets each model against the calibrated random walk, the fair
+bar for a calibrated model: on October, calibrating the random walk alone gains it 1 to 2 points.
+Every skill is computed on the ticker-days the model and its reference share. When the scored days
+span several months, a **by month** section gives the skill and its interval month by month, to tell
+an edge from a regime.
+
 ## Monitor
 
 ```bash

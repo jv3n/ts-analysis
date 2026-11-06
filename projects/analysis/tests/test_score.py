@@ -6,6 +6,7 @@ from ts_analysis.replay import QUANTILES
 from ts_analysis.score import (
     COLUMNS,
     big_moves,
+    by_month,
     intervals,
     main,
     pinball,
@@ -226,3 +227,50 @@ def test_the_skill_compares_a_model_with_the_random_walk_on_its_own_ticker_days_
     rows.append(on("MULN", "2026-10-28", "10:00", forecast("random-walk", 4.80, band)))
     assert board_row(rows)["skill"] == pytest.approx(0, abs=1e-12)
     assert interval_row(rows, resamples=50)["skill_high"] == pytest.approx(0, abs=1e-12)
+
+
+def test_a_day_only_the_model_was_forecast_on_is_left_out_of_its_skill():
+    # The model also ran on 2026-10-28, where the random walk has no forecast to set it against.
+    band = (-0.05, 0.0, 0.05)
+    rows = [on("FFIE", "2026-10-27", "10:00", forecast(m, 2.30, band)) for m in ("random-walk", "timestral-28M")]
+    rows.append(on("MULN", "2026-10-28", "10:00", forecast("timestral-28M", 4.80, band)))
+    assert board_row(rows)["skill"] == pytest.approx(0, abs=1e-12)
+    assert interval_row(rows, resamples=50)["skill_low"] == pytest.approx(0, abs=1e-12)
+
+
+def test_a_model_equal_to_the_calibrated_random_walk_has_a_skill_cal_of_exactly_zero():
+    rows = [
+        on(ticker, "2026-10-26", "10:00", forecast(model, actual, band))
+        for ticker, actual in [("FFIE", 2.30), ("MULN", 2.52), ("GCTK", 2.41)]
+        for model, band in [
+            ("random-walk", (-0.05, 0.0, 0.05)),
+            ("random-walk-cal", (-0.04, 0.01, 0.06)),
+            ("timestral-28M-cal", (-0.04, 0.01, 0.06)),
+        ]
+    ]
+    row = board_row(rows, model="timestral-28M-cal")
+    spans = interval_row(rows, model="timestral-28M-cal", resamples=100)
+    assert row["skill_cal"] == pytest.approx(0, abs=1e-12)
+    assert (spans["skill_cal_low"], spans["skill_cal_high"]) == (pytest.approx(0, abs=1e-12), pytest.approx(0, abs=1e-12))
+
+
+def test_without_a_calibrated_random_walk_the_report_has_no_skill_cal_column():
+    rows = [on("FFIE", "2026-10-26", "10:00", forecast(m, 2.30, (-0.05, 0.0, 0.05))) for m in ("random-walk", "timestral-28M")]
+    assert "| skill_cal |" not in report(pd.DataFrame(rows), 0.05, resamples=10)
+
+
+def test_the_skill_is_given_for_each_month_the_days_span():
+    band = (-0.05, 0.0, 0.05)
+    rows = [
+        on(ticker, day, "10:00", forecast(model, actual, band))
+        for ticker, day, actual in [("FFIE", "2026-09-29", 2.30), ("MULN", "2026-10-27", 2.52)]
+        for model in ("random-walk", "timestral-28M")
+    ]
+    months = by_month(pd.DataFrame(rows), resamples=10)
+    assert list(months["month"]) == ["2026-09", "2026-10"] and set(months["model"]) == {"timestral-28M"}
+    assert "## By month" in report(pd.DataFrame(rows), 0.05, resamples=10)
+
+
+def test_a_single_month_gets_no_by_month_section():
+    rows = [on("FFIE", "2026-10-26", "10:00", forecast(m, 2.30, (-0.05, 0.0, 0.05))) for m in ("random-walk", "timestral-28M")]
+    assert "## By month" not in report(pd.DataFrame(rows), 0.05, resamples=10)

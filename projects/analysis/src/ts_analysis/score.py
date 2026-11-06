@@ -65,20 +65,33 @@ def _unit(frame: pd.DataFrame) -> pd.Series:
     return frame["day"].astype(str) + " " + frame["ticker"]
 
 
+# Each skill column and the model it is set against; a missing reference leaves its column empty.
+REFERENCES = {"skill": "random-walk", "skill_cal": "random-walk-cal"}
+
+
+def _mean_loss(losses: pd.DataFrame, units: pd.Index) -> float:
+    shared = losses.loc[units]
+    return shared["sum"].sum() / shared["count"].sum() if shared["count"].sum() else float("nan")
+
+
 def scoreboard(forecasts: pd.DataFrame, call: float = 0.05) -> pd.DataFrame:
-    """The skill compares each model with the random walk on that model's ticker-days only: models
-    replayed over different days would otherwise be set against different days."""
+    """Each skill sets a model against its reference on the ticker-days both were forecast on only:
+    models replayed over different days, or a corrected model that starts later, would otherwise be
+    set against different days."""
     frame = with_outcome(forecasts)
     frame["unit"] = _unit(frame)
-    walk = frame[frame["model"] == "random-walk"].assign(loss=lambda f: pinball(f))
-    walk = walk.groupby(["bucket", "unit"])["loss"].agg(["sum", "count"])
+    losses = frame.assign(loss=pinball(frame)).groupby(["model", "bucket", "unit"])["loss"].agg(["sum", "count"])
     rows = []
     for (model, bucket), group in frame.groupby(["model", "bucket"]):
         row = {"model": model, "bucket": bucket, **figures(group, call)}
-        units = group["unit"].unique()
-        same = walk.loc[bucket].reindex(units).dropna() if bucket in walk.index.get_level_values(0) else walk.iloc[:0]
-        reference = same["sum"].sum() / same["count"].sum() if same["count"].sum() else float("nan")
-        row["skill"] = 1 - row["pinball"] / reference
+        mine = losses.loc[(model, bucket)]
+        for name, reference in REFERENCES.items():
+            if (reference, bucket) not in losses.index.droplevel("unit"):
+                row[name] = float("nan")
+                continue
+            theirs = losses.loc[(reference, bucket)]
+            shared = mine.index.intersection(theirs.index)
+            row[name] = 1 - _mean_loss(mine, shared) / _mean_loss(theirs, shared)
         rows.append(row)
     board = pd.DataFrame(rows)
     board["bucket"] = pd.Categorical(board["bucket"], BUCKETS, ordered=True)
@@ -132,8 +145,8 @@ def _span(values: np.ndarray, level: float) -> tuple[float, float]:
 def intervals(
     forecasts: pd.DataFrame, call: float = 0.05, resamples: int = 1000, seed: int = 0, level: float = 0.95
 ) -> pd.DataFrame:
-    """Percentile bootstrap over the ticker-days. Every model is resampled on the same draws, so the
-    skill interval is paired: a model equal to the random walk gets exactly 0."""
+    """Percentile bootstrap over the ticker-days. Every model is resampled on the same draws, so a skill
+    interval is paired: a model equal to its reference gets exactly 0."""
     sums = unit_sums(with_outcome(forecasts), call)
     units = sorted(sums.index.get_level_values("unit").unique())
     weights = resample_weights(len(units), resamples, seed)
@@ -151,12 +164,14 @@ def intervals(
         group = drawn(model, bucket)
         row = {"model": model, "bucket": bucket, "down_days": int((group["down"] > 0).sum()),
                "up_days": int((group["up"] > 0).sum())}
-        if ("random-walk", bucket) in pairs:
-            walk = drawn("random-walk", bucket).mul(group["n"] > 0, axis=0)
-            reference = rate(walk, "pinball", "n")
-            row["skill_low"], row["skill_high"] = _span(1 - rate(group, "pinball", "n") / reference, level)
-        else:
-            row["skill_low"] = row["skill_high"] = float("nan")
+        for name, reference in REFERENCES.items():
+            if (reference, bucket) not in pairs:
+                row[f"{name}_low"] = row[f"{name}_high"] = float("nan")
+                continue
+            theirs = drawn(reference, bucket)
+            shared = (group["n"] > 0) & (theirs["n"] > 0)
+            ratio = rate(group.mul(shared, axis=0), "pinball", "n") / rate(theirs.mul(shared, axis=0), "pinball", "n")
+            row[f"{name}_low"], row[f"{name}_high"] = _span(1 - ratio, level)
         for name, hits, cases in [
             ("coverage_80", "inside", "n"),
             ("direction", "direction_hit", "says"),
@@ -168,6 +183,25 @@ def intervals(
     board = pd.DataFrame(rows)
     board["bucket"] = pd.Categorical(board["bucket"], BUCKETS, ordered=True)
     return board.sort_values(["bucket", "model"]).reset_index(drop=True)
+
+
+def by_month(forecasts: pd.DataFrame, call: float = 0.05, resamples: int = 1000, seed: int = 0) -> pd.DataFrame:
+    """The skill against the random walk and its interval, per month, model and horizon: an edge that
+    lives in one month only is a regime, not a model."""
+    month = forecasts["day"].astype(str).str[:7]
+    rows = []
+    for name in sorted(month.unique()):
+        part = forecasts[month == name]
+        board = scoreboard(part, call).merge(intervals(part, call, resamples, seed), on=["model", "bucket"])
+        for model, group in board[board["model"] != "random-walk"].groupby("model"):
+            row = {"month": name, "model": model, **dict.fromkeys(BUCKETS, "–")}
+            for _, cell in group.iterrows():
+                if np.isnan(cell["skill"]):
+                    continue
+                span = "" if np.isnan(cell["skill_low"]) else f" [{cell['skill_low']:+.1%}, {cell['skill_high']:+.1%}]"
+                row[str(cell["bucket"])] = f"{cell['skill']:+.1%}{span}"
+            rows.append(row)
+    return pd.DataFrame(rows, columns=["month", "model", *BUCKETS])
 
 
 def quantile_coverage(forecasts: pd.DataFrame) -> pd.DataFrame:
@@ -254,14 +288,19 @@ def _spans(board: pd.DataFrame, names: dict[str, str]) -> pd.DataFrame:
 def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: int = 1000, seed: int = 0) -> str:
     pct = "{:.1%}"
     spans = intervals(forecasts, call, resamples, seed)
-    spans = _spans(spans, {"skill": "{:+.1%}", "coverage_80": pct, "direction": pct, "down_hit": pct, "up_hit": pct})
+    spans = _spans(
+        spans,
+        {"skill": "{:+.1%}", "skill_cal": "{:+.1%}", "coverage_80": pct, "direction": pct, "down_hit": pct, "up_hit": pct},
+    )
     board = scoreboard(forecasts, call).merge(spans, on=["model", "bucket"])
     days = forecasts["day"].nunique()
     tickers = forecasts[["day", "ticker"]].drop_duplicates().shape[0]
+    calibrated = board["skill_cal"].notna().any()
     main = board[
-        ["bucket", "model", "n", "pinball", "skill", "skill_95", "mae", "mdae", "coverage_80", "coverage_80_95",
-         "direction", "direction_95", "real_down"]
+        ["bucket", "model", "n", "pinball", "skill", "skill_95", *(["skill_cal", "skill_cal_95"] if calibrated else []),
+         "mae", "mdae", "coverage_80", "coverage_80_95", "direction", "direction_95", "real_down"]
     ]
+    months = by_month(forecasts, call, resamples, seed) if forecasts["day"].astype(str).str[:7].nunique() > 1 else None
     calls = board[
         ["bucket", "model", "down_calls", "down_days", "down_hit", "down_hit_95", "down_real", "up_calls", "up_days",
          "up_hit", "up_hit_95", "up_real", "sure_calls", "sure_hit"]
@@ -278,12 +317,15 @@ def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: i
             "forecasts are independent at; a `skill_95` wholly above 0 beats the random walk.",
             "## Accuracy",
             "`pinball`: mean quantile loss on log moves, lower is better. `skill`: 1 − pinball / random walk's, above 0 "
-            "beats it. `mae` / `mdae`: mean / median |median − real|, the median one robust to a few wild names. `coverage_80`: real inside the 10–90 % band, 80 % expected. "
+            "beats it" + (
+                "; `skill_cal` the same against the calibrated random walk (`ts-calibrate`), the fair bar for a "
+                "calibrated model" if calibrated else ""
+            ) + ". Each on the ticker-days the model and its reference share. `mae` / `mdae`: mean / median |median − real|, the median one robust to a few wild names. `coverage_80`: real inside the 10–90 % band, 80 % expected. "
             "`direction`: median and real move of the same sign, flat moves left out. `real_down`: share of "
             "real moves down, the bar a direction call has to clear.",
             _table(
                 main,
-                {"pinball": "{:.4f}", "skill": "{:+.1%}", "mae": pct, "mdae": pct, "coverage_80": pct, "direction": pct, "real_down": pct},
+                {"pinball": "{:.4f}", "skill": "{:+.1%}", "skill_cal": "{:+.1%}", "mae": pct, "mdae": pct, "coverage_80": pct, "direction": pct, "real_down": pct},
             ),
             "## Calls",
             f"A call: the median says {call:.0%} down or up or more (`down_*`, `up_*`), or the band sits "
@@ -305,6 +347,15 @@ def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: i
                 {"big_share": pct, "big_down": pct, "lean_hit": pct, "quiet_hit": pct, "width_big": "{:.2f}",
                  "width_rest": "{:.2f}", "coverage_big": pct},
             ) if not moves.empty else "No forecast at +5, +15 or +30 min.",
+            *(
+                [
+                    "## By month",
+                    "`skill` against the random walk per month, with its 95 % interval over that month's ticker-days.",
+                    _table(months, {}),
+                ]
+                if months is not None
+                else []
+            ),
         ]
     )
 
