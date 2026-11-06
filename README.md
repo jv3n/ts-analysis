@@ -136,6 +136,10 @@ day alone, as the earlier variants were measured.
 carried price stays in the context, but the model knows it was not traded. Over several sessions the
 holes pile up (pre-market, overnight, thin names), which is what it tests.
 
+Each ticker is forecast from its **entry** only ([#37](https://github.com/jv3n/ts-analysis/issues/37),
+see Score): the cuts before it read the future through the pick, and the score drops them anyway,
+so the replay does not spend time on them. `--all-cuts` forecasts every cut from the open.
+
 The first run downloads the weights from Hugging Face. A day already replayed for a model is
 skipped, so a rerun resumes.
 

@@ -110,3 +110,21 @@ def test_a_day_whose_past_sessions_are_not_fetched_yet_is_not_replayed_with_them
     monkeypatch.setattr("ts_analysis.replay.day_grids", lambda *_: pytest.fail("replayed without its past"))
 
     replay(store, MON, MON, [Flat()], step=5, past_days=3)
+
+
+def test_a_ticker_is_first_forecast_at_the_cut_after_its_entry_bar():
+    # FFIE reaches its gap on the 10:00 bar: the 10:00 cut has not seen it close, the 10:05 one has.
+    entry = minute_of(time(10, 0))
+    rows = replay_day(MON, {"FFIE": gapper(2.40, 0.0, seed=9)}, [Flat()], step=5, entries={"FFIE": entry})
+    assert min(row["cut"] for row in rows) == "10:05"
+
+
+def test_a_ticker_that_never_enters_is_never_forecast():
+    grids = {"FFIE": gapper(2.40, 0.0, seed=10), "MULN": gapper(0.45, 0.0, seed=11)}
+    rows = replay_day(MON, grids, [Flat()], step=30, entries={"FFIE": OPEN})
+    assert {row["ticker"] for row in rows} == {"FFIE"}
+
+
+def test_without_entries_every_cut_is_forecast_from_the_open():
+    rows = replay_day(MON, {"FFIE": gapper(2.40, 0.0, seed=12)}, [Flat()], step=5)
+    assert min(row["cut"] for row in rows) == "09:30"
