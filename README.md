@@ -102,11 +102,18 @@ fading pump and a rebounding crash mirror images; `clock-asym` does both. On Oct
 `log-capped`: the clock changes nothing in any slot of the day, and without the symmetric averaging
 every horizon gets worse. They stay to reproduce the measure.
 
-`--past-days N` (0 to 5, 0 by default) puts the N sessions before the day in front of the context,
+`--past-days N` (0 to 5, 5 by default) puts the N sessions before the day in front of the context,
 each from 4:00 to its close, the close carried over the night: without them Timestral never sees the
 previous close, so not the gap the ticker was picked for. A name that traded on fewer sessions gets
 the missing ones as NaN. The clock restarts every day. The model name gets `-pastN`, e.g.
-`timestral-28M-log-capped-past3`; a day whose past sessions are not fetched yet is skipped.
+`timestral-28M-log-capped-past3`; a day whose past sessions are not fetched yet is skipped. On
+October 5 sessions beat 1 and 3 at every horizon, and the edge held on a held-out week
+([#26](https://github.com/jv3n/ts-analysis/issues/26)), hence the default; `--past-days 0` gives the
+day alone, as the earlier variants were measured.
+
+`log-capped-mask` passes Timestral an `observation_mask`, False on the minutes without a trade: the
+carried price stays in the context, but the model knows it was not traded. Over several sessions the
+holes pile up (pre-market, overnight, thin names), which is what it tests.
 
 The first run downloads the weights from Hugging Face. A day already replayed for a model is
 skipped, so a rerun resumes.
