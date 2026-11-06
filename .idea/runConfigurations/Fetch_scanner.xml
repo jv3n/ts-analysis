@@ -1,0 +1,17 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Fetch scanner" type="ShConfigurationType" folderName="Pipeline">
+    <option name="SCRIPT_TEXT" value="wsl.exe -d Ubuntu --cd /home/Me/dev/ts-analysis/projects/analysis -- bash -lc &quot;mkdir -p data-scanner &amp;&amp; ln -sfn ../data/grouped data-scanner/grouped &amp;&amp; ln -sfn ../data/splits data-scanner/splits &amp;&amp; ln -sfn ../data/common data-scanner/common &amp;&amp; ln -sfn ../data/bars data-scanner/bars &amp;&amp; ln -sfn ../data/past data-scanner/past &amp;&amp; uv run ts-fetch --rule scanner --data data-scanner --start 2026-05-01&quot;" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="" />
+    <option name="SCRIPT_OPTIONS" value="" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+    <option name="INTERPRETER_PATH" value="" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="false" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>

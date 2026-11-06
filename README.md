@@ -57,6 +57,27 @@ before it. Those are fetched split-adjusted, so a reverse split inside the windo
 the fetch, and the day's raw bars set against their adjusted copy undo the splits that came after.
 Days fetched before this have their past sessions fetched on the next run, and nothing else.
 
+`--rule scanner` ([#39](https://github.com/jv3n/ts-analysis/issues/39)) picks `ts-scanner`'s population
+instead: the **premarket GUS** and the names that **pushed during the session**. The grouped daily
+bars hold the regular session only, so the candidates are the names that opened 15 % up (what every
+GUS shows there), or whose session high reached +25 % on the previous close, or whose session range
+reached 40 %: about 45 a day, 10 drawn at random as with the default rule. Each pick then gets its
+setup and entry minute from its bars, all known at the time:
+
+- a **GUS** (previous close → premarket high ≥ +45 %, premarket open → premarket high ≥ +15 %,
+  previous close → open ≥ +15 %, premarket high → open ≥ −55 %, the thresholds of
+  `trade/docs/pattern/GUS.md`) enters on the session's first bar;
+- any other name enters on the first session bar where its running high reaches +25 % on the
+  previous close, or its running range 40 %: the minute a live scanner would list it.
+
+A new rule means new picks, so it goes in its own `--data` folder. The grouped bars, splits, common
+stocks, bars and past sessions do not depend on the rule and are shared by linking them:
+
+```bash
+mkdir -p data-scanner && for kind in grouped splits common bars past; do ln -s ../data/$kind data-scanner/$kind; done
+uv run ts-fetch --rule scanner --data data-scanner --start 2026-05-01
+```
+
 A day costs 28 requests (grouped bars, splits, the day's common stocks over 6 pages, 10 tickers
 twice): about 5.6 min at 5 requests a minute, so a month takes about 2 h. A day is only published after midnight ET; `--end` defaults to
 yesterday ET, and the run stops cleanly at the first day not published yet. Rerun the same command

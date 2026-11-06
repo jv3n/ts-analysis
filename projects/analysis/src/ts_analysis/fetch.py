@@ -13,7 +13,7 @@ import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
 from ts_analysis.massive import REQUESTS_PER_MINUTE, DayNotPublished, MassiveClient
-from ts_analysis.selection import GapRule, gap_candidates, sample
+from ts_analysis.selection import GapRule, ScannerRule, gap_candidates, sample, scanner_candidates
 from ts_analysis.series import ET
 from ts_analysis.status import Status
 from ts_analysis.store import Store, bars_frame
@@ -76,27 +76,28 @@ def previous_session(source: Source, store: Store, day: date, max_lookback: int 
     raise LookupError(f"No session found in the {max_lookback} days before {day}")
 
 
-def pick(source: Source, store: Store, day: date, rule: GapRule, per_day: int, seed: str) -> dict | None:
+def pick(
+    source: Source, store: Store, day: date, rule: GapRule | ScannerRule, per_day: int, seed: str
+) -> dict | None:
     today = grouped(source, store, day)
     if not today:
         return None
-    prev = previous_session(source, store, day)
-    splits = cached(store.load_splits, store.save_splits, source.splits, day)
+    prev = {row["T"]: row["c"] for row in previous_session(source, store, day)}
+    splits = frozenset(split["ticker"] for split in cached(store.load_splits, store.save_splits, source.splits, day))
     common = cached(store.load_common, store.save_common, source.common_stocks, day) if rule.common_only else None
-    candidates = gap_candidates(
-        {row["T"]: row["h"] for row in today},
-        {row["T"]: row["c"] for row in prev},
-        rule,
-        frozenset(split["ticker"] for split in splits),
-        None if common is None else frozenset(common),
-    )
+    common = None if common is None else frozenset(common)
+    if isinstance(rule, ScannerRule):
+        candidates = scanner_candidates(today, prev, rule, splits, common)
+    else:
+        found = gap_candidates({row["T"]: row["h"] for row in today}, prev, rule, splits, common)
+        candidates = [{**asdict(c), "gap": round(c.gap, 4)} for c in found]
     return {
         "day": day.isoformat(),
         "rule": asdict(rule),
         "per_day": per_day,
         "seed": seed,
-        "candidates": [{**asdict(c), "gap": round(c.gap, 4)} for c in candidates],
-        "picked": sample([c.ticker for c in candidates], per_day, seed=f"{seed}:{day.isoformat()}"),
+        "candidates": candidates,
+        "picked": sample([c["ticker"] for c in candidates], per_day, seed=f"{seed}:{day.isoformat()}"),
     }
 
 
@@ -116,7 +117,7 @@ def past_sessions(adjusted: pd.DataFrame, raw: pd.DataFrame, day: date, sessions
     return past
 
 
-def check_settings(picks: dict, rule: GapRule, per_day: int, seed: str) -> None:
+def check_settings(picks: dict, rule: GapRule | ScannerRule, per_day: int, seed: str) -> None:
     stored = (picks["rule"], picks["per_day"], picks["seed"])
     if stored != (asdict(rule), per_day, seed):
         raise PicksMismatch(
@@ -126,7 +127,13 @@ def check_settings(picks: dict, rule: GapRule, per_day: int, seed: str) -> None:
 
 
 def fetch_day(
-    source: Source, store: Store, day: date, rule: GapRule, per_day: int, seed: str, status: Status | None = None
+    source: Source,
+    store: Store,
+    day: date,
+    rule: GapRule | ScannerRule,
+    per_day: int,
+    seed: str,
+    status: Status | None = None,
 ) -> dict | None:
     """Picks the day's tickers once, then fetches whatever bars are missing, so a rerun resumes."""
     picks = store.load_picks(day)
@@ -174,7 +181,7 @@ def planned_requests(store: Store, days: list[date], per_day: int) -> int:
 
 
 def backfill(
-    source: Source, store: Store, start: date, end: date, rule: GapRule, per_day: int, seed: str
+    source: Source, store: Store, start: date, end: date, rule: GapRule | ScannerRule, per_day: int, seed: str
 ) -> None:
     days = list(weekdays(start, end))
     started = time.monotonic()
@@ -210,6 +217,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--per-day", type=int, default=10)
     parser.add_argument("--seed", default="ts-analysis")
+    parser.add_argument(
+        "--rule",
+        choices=["gap", "scanner"],
+        default="gap",
+        help="gap: the session high --min-gap up; scanner: ts-scanner's premarket GUS and intraday pushers",
+    )
     parser.add_argument("--min-gap", type=float, default=GapRule.min_gap)
     parser.add_argument("--min-price", type=float, default=GapRule.min_prev_close)
     parser.add_argument("--max-price", type=float, default=GapRule.max_prev_close)
@@ -224,7 +237,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    rule = GapRule(args.min_gap, args.min_price, args.max_price)
+    rule = ScannerRule() if args.rule == "scanner" else GapRule(args.min_gap, args.min_price, args.max_price)
     try:
         client, store = MassiveClient(api_key), Store(args.data)
         backfill(client, store, args.start, args.end, rule, args.per_day, args.seed)

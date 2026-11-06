@@ -16,7 +16,7 @@ from ts_analysis.fetch import (
     weekdays,
 )
 from ts_analysis.massive import DayNotPublished
-from ts_analysis.selection import GapRule
+from ts_analysis.selection import GapRule, ScannerRule
 from ts_analysis.series import ET
 from ts_analysis.store import Store, bars_frame
 
@@ -270,3 +270,16 @@ def test_the_cli_refuses_to_run_without_an_api_key(monkeypatch, tmp_path, capsys
     with pytest.raises(SystemExit):
         main(["--start", "2026-10-26", "--end", "2026-10-26"])
     assert "MASSIVE_API_KEY" in capsys.readouterr().err
+
+
+def test_the_scanner_rule_picks_from_the_open_the_high_and_the_range_and_records_its_name(tmp_path):
+    class ScannerSource(FakeSource):
+        def grouped_daily(self, day):
+            self.calls.append(("grouped", day))
+            return {
+                FRI: [{"T": "FFIE", "o": 1.86, "h": 1.90, "l": 1.84, "c": 1.85}, {"T": "SNDL", "o": 2.10, "h": 2.15, "l": 2.08, "c": 2.10}],
+                MON: [{"T": "FFIE", "o": 2.20, "h": 2.25, "l": 2.10, "c": 2.18}, {"T": "SNDL", "o": 2.11, "h": 2.20, "l": 2.09, "c": 2.12}],
+            }.get(day, [])
+
+    picks = fetch_monday(Store(tmp_path), ScannerSource(), rule=ScannerRule())
+    assert (picks["rule"]["name"], picks["picked"]) == ("scanner", ["FFIE"])
