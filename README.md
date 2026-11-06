@@ -200,3 +200,6 @@ A local page to follow the runs without reading logs or parquet files, served fr
   ahead of them, then the real price.
 - If the figures hold up, a real-time mode on a paid plan: the model starts on a ticker as soon as it
   enters the top list.
+- Context the model does not see yet, news, SEC filings and the float
+  ([#30](https://github.com/jv3n/ts-analysis/issues/30)): where to get a dated float is in
+  [`docs/float-sources.md`](docs/float-sources.md).
