@@ -126,6 +126,26 @@ data/forecasts/<model>/<day>.parquet   # model, ticker, day, cut, horizon, to_cl
 The quantiles are kept as log moves, the scale the model forecasts in: at long horizons the upper
 tail is wide in log space, and turned into a price it reaches absurd values (×6,000 at q99).
 
+## Calibrate
+
+```bash
+uv run ts-calibrate   # --model to pick, --min-days 5, --window N to learn from the last N days only
+```
+
+Corrects the stored forecasts after the fact, from the model's own past errors: Timestral stays frozen
+and nothing is trained. Walk-forward, per model and horizon (+5, +15, +30, close), the correction of
+day J is learned from the days before J only:
+
+- **shift**: the median moves by the typical miss, so that half the past real moves fall below it;
+- **band**: each side of the band is then scaled by one factor, so that 80 % of the past real moves
+  fall inside the 10–90 % band.
+
+The corrected forecasts go to `data/forecasts/<model>-cal/`, scored by `ts-score` like any model, so
+the correction has to earn its place against the raw model and the baselines. Every stored model is
+corrected except `flat`, which has no band, the random walk included: a calibrated random walk is the
+fair baseline for a calibrated Timestral. A day with fewer than 5 days before it is left out, and the
+`-cal` folders are rebuilt whole on each run.
+
 ## Score
 
 ```bash
