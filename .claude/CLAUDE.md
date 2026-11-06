@@ -92,6 +92,7 @@ projects/analysis/          # the Python project: pyproject.toml, uv.lock, data/
 │   ├── fetch.py            # backfill orchestration + `ts-fetch` CLI
 │   ├── series.py           # minute grid: holes filled, log prices, what a cut sees (pure)
 │   ├── replay.py           # cuts, baselines, Timestral + `ts-replay` CLI
+│   ├── calibrate.py        # walk-forward shift and band correction + `ts-calibrate` CLI (pure)
 │   ├── score.py            # pinball, direction, calls, calibration + `ts-score` CLI (pure)
 │   ├── status.py           # progress file of a running ts-fetch / ts-replay
 │   └── monitor.py          # JSON endpoints + `ts-monitor` server, localhost only
@@ -107,6 +108,7 @@ uv sync                                               # install, creates .venv
 uv run pytest                                         # tests
 uv run ts-fetch --start 2026-10-01 --end 2026-10-27   # backfill; --end defaults to yesterday ET
 uv run ts-replay --start 2026-10-01 --end 2026-10-27  # forecasts → data/forecasts/<model>/<day>.parquet
+uv run ts-calibrate                                   # corrected forecasts → data/forecasts/<model>-cal/
 uv run ts-score                                       # report → data/reports/score.md
 uv run ts-monitor                                     # page on http://localhost:8765
 ```
