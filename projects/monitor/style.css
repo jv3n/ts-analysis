@@ -55,7 +55,7 @@ body {
   color: var(--text-primary);
   font: 14px/1.45 var(--font);
 }
-header, main { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+header, main { max-width: 1600px; margin: 0 auto; padding: 0 24px; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-top: 20px; }
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 15px; margin: 28px 0 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
