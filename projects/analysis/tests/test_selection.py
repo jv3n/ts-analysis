@@ -1,4 +1,4 @@
-from ts_analysis.selection import Candidate, GapRule, gap_candidates, sample
+from ts_analysis.selection import Candidate, GapRule, gap_candidates, sample, scanner_candidates
 
 PREV_CLOSES = {"MULN": 0.42, "FFIE": 2.50, "NVDA": 135.20, "SNDL": 2.10, "BBIG": 0.12}
 
@@ -62,3 +62,27 @@ def test_the_sample_is_reproducible_for_a_given_seed_whatever_the_input_order():
 def test_different_days_draw_different_samples():
     names = [f"T{i:02d}" for i in range(30)]
     assert sample(names, 10, "ts-analysis:2026-10-26") != sample(names, 10, "ts-analysis:2026-10-27")
+
+
+def scanned(*rows: dict, closes: dict[str, float] | None = None) -> list[str]:
+    return [c["ticker"] for c in scanner_candidates(list(rows), closes or {"BNAI": 2.00, "AIOK": 9.16, "SNDL": 2.10})]
+
+
+def test_an_open_15_percent_up_is_a_scanner_candidate_even_if_the_session_never_pushed():
+    assert scanned({"T": "BNAI", "o": 2.32, "h": 2.34, "l": 2.00}) == ["BNAI"]
+
+
+def test_a_session_high_25_percent_up_is_a_scanner_candidate():
+    assert scanned({"T": "AIOK", "o": 9.30, "h": 11.50, "l": 9.20}) == ["AIOK"]
+
+
+def test_a_40_percent_range_is_a_scanner_candidate_even_below_the_previous_close():
+    assert scanned({"T": "SNDL", "o": 2.00, "h": 2.10, "l": 1.45}) == ["SNDL"]
+
+
+def test_a_quiet_session_is_no_scanner_candidate():
+    assert scanned({"T": "SNDL", "o": 2.12, "h": 2.20, "l": 2.05}) == []
+
+
+def test_an_open_outside_the_price_range_is_no_scanner_candidate():
+    assert scanned({"T": "AIOK", "o": 10.50, "h": 14.00, "l": 10.20}, closes={"AIOK": 9.16}) == []

@@ -2,18 +2,19 @@ from datetime import date
 
 import pandas as pd
 
-from ts_analysis.entry import after_entry, entries, entry_minute
+from ts_analysis.entry import after_entry, entries, entry_minute, is_gus, scanner_entry
 from ts_analysis.score import main
 from ts_analysis.store import Store
 
 DAY = "2026-10-27"
 
 
-def bars(*minutes: tuple[str, float]) -> pd.DataFrame:
-    """AIOK's 1-min bars, given as (ET clock, high)."""
-    times = [pd.Timestamp(f"{DAY} {clock}", tz="America/New_York").tz_convert("UTC") for clock, _ in minutes]
-    highs = [high for _, high in minutes]
-    return pd.DataFrame({"time": times, "open": highs, "high": highs, "low": highs, "close": highs, "volume": 1000.0})
+def bars(*minutes: tuple) -> pd.DataFrame:
+    """1-min bars given as (ET clock, high) — open, low and close at the high — or (clock, open, high, low)."""
+    rows = [(clock, *prices) if len(prices) == 3 else (clock, prices[0], prices[0], prices[0]) for clock, *prices in minutes]
+    times = [pd.Timestamp(f"{DAY} {clock}", tz="America/New_York").tz_convert("UTC") for clock, *_ in rows]
+    opens, highs, lows = ([row[i] for row in rows] for i in (1, 2, 3))
+    return pd.DataFrame({"time": times, "open": opens, "high": highs, "low": lows, "close": highs, "volume": 1000.0})
 
 
 def forecast(cut: str, ticker: str = "AIOK") -> dict:
@@ -57,7 +58,7 @@ def stored(tmp_path) -> Store:
 
 
 def test_the_entries_are_read_from_the_picks_and_the_stored_bars(tmp_path):
-    assert entries(stored(tmp_path)).to_dict("records") == [{"day": DAY, "ticker": "AIOK", "entry": 372}]
+    assert entries(stored(tmp_path)).to_dict("records") == [{"day": DAY, "ticker": "AIOK", "setup": "gap", "entry": 372}]
 
 
 def test_the_score_keeps_the_cuts_after_entry_unless_asked_for_every_cut(tmp_path, capsys):
@@ -69,3 +70,39 @@ def test_the_score_keeps_the_cuts_after_entry_unless_asked_for_every_cut(tmp_pat
     assert "1 forecasts, on the cuts after the ticker reached its gap, 1 of 2" in capsys.readouterr().out
     main(["--data", str(tmp_path), "--resamples", "10", "--all-cuts"])
     assert "2 forecasts, on every cut" in capsys.readouterr().out
+
+
+# BNAI closed at $2.00: a premarket push from $2.10 to $3.10 (+55 %), an open at $2.60 (+30 %, 16 % off the top).
+GUS_DAY = [("04:12", 2.10, 2.15, 2.08), ("07:45", 2.40, 3.10, 2.35), ("09:12", 2.70, 2.75, 2.55), ("09:30", 2.60, 2.85, 2.50)]
+
+
+def test_a_premarket_push_still_alive_at_the_open_is_a_gus_entering_on_the_first_session_bar():
+    assert scanner_entry(bars(*GUS_DAY, ("10:40", 2.10, 2.20, 1.90)), prev_close=2.00) == ("gus", (9 - 4) * 60 + 30)
+
+
+def test_a_gus_reads_no_bar_after_the_session_s_first_one():
+    calm, wild = bars(*GUS_DAY, ("11:00", 2.40, 2.45, 2.30)), bars(*GUS_DAY, ("11:00", 2.40, 9.00, 0.40))
+    assert is_gus(calm, prev_close=2.00) and is_gus(wild, prev_close=2.00)
+
+
+def test_a_premarket_that_gave_everything_back_before_the_bell_is_no_gus():
+    # Open at $1.30: 58 % off the $3.10 top, and down on the previous close.
+    faded = [*GUS_DAY[:3], ("09:30", 1.30, 1.35, 1.25)]
+    assert not is_gus(bars(*faded), prev_close=2.00)
+
+
+def test_a_session_push_enters_on_the_first_bar_whose_running_high_reaches_25_percent():
+    # AIOK closed at $9.16: +25 % is $11.45, first touched at 10:12.
+    day = bars(("09:30", 9.30, 9.40, 9.20), ("10:11", 11.00, 11.40, 10.90), ("10:12", 11.40, 11.60, 11.30))
+    assert scanner_entry(day, prev_close=9.16) == ("push", (10 - 4) * 60 + 12)
+
+
+def test_a_40_percent_session_range_enters_even_below_the_previous_close():
+    # CLRO closed at $5.00, topped at $4.85 at the open, then sank: $3.40 at 11:00 completes a 40 % range.
+    day = bars(("09:30", 4.80, 4.85, 4.70), ("10:15", 4.10, 4.15, 3.90), ("11:00", 3.50, 3.55, 3.40))
+    assert scanner_entry(day, prev_close=5.00) == ("push", (11 - 4) * 60)
+
+
+def test_a_name_that_never_pushes_in_the_session_does_not_enter():
+    day = bars(("09:30", 9.30, 9.40, 9.20), ("15:59", 10.10, 10.20, 10.00))
+    assert scanner_entry(day, prev_close=9.16) is None
