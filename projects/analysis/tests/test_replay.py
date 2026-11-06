@@ -89,3 +89,24 @@ def test_a_replayed_day_is_not_replayed_again(tmp_path, monkeypatch):
     monkeypatch.setattr("ts_analysis.replay.day_grids", lambda *_: pytest.fail("bars were read again"))
 
     replay(store, MON, MON, [Flat()], step=5)
+
+
+def test_with_past_sessions_a_forecast_sees_them_and_still_no_bar_after_the_cut():
+    ffie = gapper(2.40, -0.001, seed=8)
+    friday = np.log(np.full(CLOSE, 1.85))
+    grid = Grid(np.concatenate([friday, ffie.log_close]), np.concatenate([np.full(CLOSE, 900.0), ffie.volume]), CLOSE)
+    spy = Spy()
+
+    replay_day(MON, {"FFIE": grid}, [spy], step=60)
+
+    for cut, seen in zip(range(OPEN, CLOSE, 60), spy.seen):
+        np.testing.assert_array_equal(seen[0], grid.log_close[: CLOSE + cut])
+
+
+def test_a_day_whose_past_sessions_are_not_fetched_yet_is_not_replayed_with_them(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    store.save_picks(MON, {"picked": ["FFIE"]})
+    store.save_bars(MON, "FFIE", [])
+    monkeypatch.setattr("ts_analysis.replay.day_grids", lambda *_: pytest.fail("replayed without its past"))
+
+    replay(store, MON, MON, [Flat()], step=5, past_days=3)

@@ -9,20 +9,30 @@ from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
-from ts_analysis.massive import DayNotPublished, MassiveClient
+from ts_analysis.massive import REQUESTS_PER_MINUTE, DayNotPublished, MassiveClient
 from ts_analysis.selection import GapRule, gap_candidates, sample
+from ts_analysis.series import ET
 from ts_analysis.status import Status
-from ts_analysis.store import Store
+from ts_analysis.store import Store, bars_frame
 
 log = logging.getLogger("ts_analysis.fetch")
+
+PAST_SESSIONS = 5
+# Calendar days: 5 sessions back still fit with a weekend and a holiday in between.
+PAST_LOOKBACK = 10
+PRICE_COLUMNS = ["open", "high", "low", "close", "vwap"]
+# Grouped bars, splits and the common stocks over 6 pages; the previous session's grouped bars are
+# usually the day before's, already stored.
+NEW_DAY_REQUESTS = 8
 
 
 class Source(Protocol):
     def grouped_daily(self, day: date) -> list[dict]: ...
 
-    def minute_bars(self, ticker: str, day: date) -> list[dict]: ...
+    def minute_bars(self, ticker: str, start: date, end: date, adjusted: bool = False) -> list[dict]: ...
 
     def splits(self, day: date) -> list[dict]: ...
 
@@ -90,6 +100,22 @@ def pick(source: Source, store: Store, day: date, rule: GapRule, per_day: int, s
     }
 
 
+def past_sessions(adjusted: pd.DataFrame, raw: pd.DataFrame, day: date, sessions: int) -> pd.DataFrame | None:
+    """The last `sessions` sessions before `day`, in the prices `day` traded at. Massive adjusts for
+    every split up to the fetch: that keeps a split inside the window from reading as a jump, and the
+    raw day set against its adjusted copy undoes the splits after it. None when the two share no bar."""
+    traded = adjusted["time"].dt.tz_convert(ET).dt.date
+    matched = raw.merge(adjusted[traded == day], on="time", suffixes=("", "_adjusted"))
+    if matched.empty:
+        return None
+    factor = float((matched["close"] / matched["close_adjusted"]).median())
+    keep = sorted(set(traded[traded < day]))[-sessions:]
+    past = adjusted[traded.isin(keep)].reset_index(drop=True)
+    past[PRICE_COLUMNS] *= factor
+    past["volume"] /= factor
+    return past
+
+
 def check_settings(picks: dict, rule: GapRule, per_day: int, seed: str) -> None:
     stored = (picks["rule"], picks["per_day"], picks["seed"])
     if stored != (asdict(rule), per_day, seed):
@@ -116,13 +142,35 @@ def fetch_day(
     for number, ticker in enumerate(picked, 1):
         if status:
             status.update(ticker=ticker, ticker_number=number, tickers=len(picked))
-        if store.has_bars(day, ticker):
-            log.info("%s   %2d/%d %-6s already stored", day, number, len(picked), ticker)
-            continue
-        rows = source.minute_bars(ticker, day)
-        store.save_bars(day, ticker, rows)
-        log.info("%s   %2d/%d %-6s %d bars", day, number, len(picked), ticker, len(rows))
+        done = []
+        if not store.has_bars(day, ticker):
+            rows = source.minute_bars(ticker, day, day)
+            store.save_bars(day, ticker, rows)
+            done.append(f"{len(rows)} bars")
+        if not store.has_past(day, ticker):
+            adjusted = bars_frame(source.minute_bars(ticker, day - timedelta(days=PAST_LOOKBACK), day, adjusted=True))
+            past = past_sessions(adjusted, store.load_bars(day, ticker), day, PAST_SESSIONS)
+            if past is None:
+                log.warning("%s   %-6s adjusted and raw bars share no minute, no past sessions", day, ticker)
+                past = adjusted.iloc[0:0]
+            store.save_past(day, ticker, past)
+            done.append(f"{past['time'].dt.tz_convert(ET).dt.date.nunique()} past sessions")
+        log.info("%s   %2d/%d %-6s %s", day, number, len(picked), ticker, ", ".join(done) or "already stored")
     return picks
+
+
+def planned_requests(store: Store, days: list[date], per_day: int) -> int:
+    """The requests a backfill still has to make, as far as the store tells: what a picked day misses,
+    a full day for one not picked yet, none for a day known to be a holiday."""
+    total = 0
+    for day in days:
+        picks = store.load_picks(day)
+        if picks is None:
+            total += 0 if store.load_grouped(day) == [] else NEW_DAY_REQUESTS + 2 * per_day
+            continue
+        for ticker in picks["picked"]:
+            total += (not store.has_bars(day, ticker)) + (not store.has_past(day, ticker))
+    return total
 
 
 def backfill(
@@ -130,7 +178,10 @@ def backfill(
 ) -> None:
     days = list(weekdays(start, end))
     started = time.monotonic()
-    with Status(store.root, "fetch", start=start.isoformat(), end=end.isoformat(), days=len(days)) as status:
+    requests = planned_requests(store, days, per_day)
+    info = {"start": start.isoformat(), "end": end.isoformat(), "days": len(days), "requests": requests}
+    log.info("%d requests to make, about %.0f min of quota", requests, requests / REQUESTS_PER_MINUTE)
+    with Status(store.root, "fetch", **info, estimated_s=round(requests * 60 / REQUESTS_PER_MINUTE)) as status:
         for number, day in enumerate(days, 1):
             log.info("%s day %d/%d", day, number, len(days))
             status.update(day=day.isoformat(), day_number=number, ticker=None, ticker_number=0, tickers=0)

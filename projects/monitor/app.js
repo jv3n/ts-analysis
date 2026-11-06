@@ -21,6 +21,22 @@ const ago = (iso) => {
   return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : new Date(iso).toLocaleString();
 };
 
+const duration = (s) => {
+  const minutes = Math.round(s / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}`;
+};
+
+// The fetch is paced by the quota, so its length is known at the start: the requests it plans, 12 s each.
+function estimate(status) {
+  if (status.estimated_s == null) return "";
+  const total = `~${duration(status.estimated_s)} for ${status.requests} requests`;
+  if (status.state !== "running") return total;
+  const end = Date.parse(status.started) + status.estimated_s * 1000;
+  const left = Math.max(0, (end - Date.now()) / 1000);
+  const at = new Date(end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${total} · ends around ${at} · ${duration(left)} left`;
+}
+
 async function get(path) {
   const response = await fetch(path, { cache: "no-store" });
   const body = await response.json();
@@ -40,6 +56,7 @@ function progressCard(title, status, inner) {
       <span style="width:${(share * 100).toFixed(1)}%"></span>
     </div>
     <p class="num">day ${status.day_number ?? 0}/${status.days} ${esc(status.day ?? "")}${inner.text ? ` · ${inner.text}` : ""}</p>
+    ${estimate(status) ? `<p class="num">${estimate(status)}</p>` : ""}
     <p class="muted">started ${ago(status.started)} · updated ${ago(status.updated)}</p>
     ${status.note ? `<p>${esc(status.note)}</p>` : ""}
     ${status.error ? `<p class="error">${esc(status.error)}</p>` : ""}`;

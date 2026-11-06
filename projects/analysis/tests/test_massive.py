@@ -58,12 +58,25 @@ def test_minute_bars_asks_one_day_of_raw_1_minute_bars():
         seen.append(request)
         return httpx.Response(200, json={"results": [{"t": 1793021400000, "c": 2.41}]})
 
-    bars = client_for(handler, FakeClock()).minute_bars("FFIE", MON)
+    bars = client_for(handler, FakeClock()).minute_bars("FFIE", MON, MON)
 
     assert bars == [{"t": 1793021400000, "c": 2.41}]
     assert seen[0].url.path == "/v2/aggs/ticker/FFIE/range/1/minute/2026-10-26/2026-10-26"
     assert seen[0].url.params["adjusted"] == "false"
     assert seen[0].url.params["limit"] == "50000"
+
+
+def test_the_past_sessions_are_asked_split_adjusted_over_the_whole_range():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    client_for(handler, FakeClock()).minute_bars("FFIE", date(2026, 10, 16), MON, adjusted=True)
+
+    assert seen[0].url.path == "/v2/aggs/ticker/FFIE/range/1/minute/2026-10-16/2026-10-26"
+    assert seen[0].url.params["adjusted"] == "true"
 
 
 def test_the_api_key_goes_in_a_header_and_never_in_the_url():
