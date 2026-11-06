@@ -51,14 +51,22 @@ class Store:
         return self.bars_path(day, ticker).exists()
 
     def save_bars(self, day: date, ticker: str, rows: list[dict]) -> None:
-        path = self.bars_path(day, ticker)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        bars_frame(rows).to_parquet(tmp, index=False)
-        tmp.replace(path)
+        _write_parquet(self.bars_path(day, ticker), bars_frame(rows))
 
     def load_bars(self, day: date, ticker: str) -> pd.DataFrame:
         return pd.read_parquet(self.bars_path(day, ticker))
+
+    def past_path(self, day: date, ticker: str) -> Path:
+        return self.root / "past" / day.isoformat() / f"{ticker}.parquet"
+
+    def has_past(self, day: date, ticker: str) -> bool:
+        return self.past_path(day, ticker).exists()
+
+    def save_past(self, day: date, ticker: str, frame: pd.DataFrame) -> None:
+        _write_parquet(self.past_path(day, ticker), frame)
+
+    def load_past(self, day: date, ticker: str) -> pd.DataFrame:
+        return pd.read_parquet(self.past_path(day, ticker))
 
     def forecasts_path(self, model: str, day: date) -> Path:
         return self.root / "forecasts" / model / f"{day.isoformat()}.parquet"
@@ -67,11 +75,7 @@ class Store:
         return self.forecasts_path(model, day).exists()
 
     def save_forecasts(self, model: str, day: date, frame: pd.DataFrame) -> None:
-        path = self.forecasts_path(model, day)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        frame.to_parquet(tmp, index=False)
-        tmp.replace(path)
+        _write_parquet(self.forecasts_path(model, day), frame)
 
     def load_forecasts(self, model: str, day: date) -> pd.DataFrame:
         return pd.read_parquet(self.forecasts_path(model, day))
@@ -94,4 +98,11 @@ def _write_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data))
+    tmp.replace(path)
+
+
+def _write_parquet(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    frame.to_parquet(tmp, index=False)
     tmp.replace(path)

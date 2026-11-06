@@ -50,8 +50,15 @@ close in **$0.30–$10**), among **common stocks** only (no warrants, rights or 
 **raw**, not split-adjusted, so every stored day stays consistent whenever it was fetched; a ticker
 whose split executes that day is left out, since its raw gap is meaningless.
 
-A day costs 18 requests (grouped bars, splits, the day's common stocks over 6 pages, 10 tickers):
-about 3.6 min at 5 requests a minute, so a month takes about 75 min. A day is only published after midnight ET; `--end` defaults to
+Each picked ticker also gets its **5 sessions before the day**
+([#26](https://github.com/jv3n/ts-analysis/issues/26)), in one request over the 10 calendar days
+before it. Those are fetched split-adjusted, so a reverse split inside the window does not read as a
+×10 move, then brought back to the prices the day traded at: Massive adjusts for every split up to
+the fetch, and the day's raw bars set against their adjusted copy undo the splits that came after.
+Days fetched before this have their past sessions fetched on the next run, and nothing else.
+
+A day costs 28 requests (grouped bars, splits, the day's common stocks over 6 pages, 10 tickers
+twice): about 5.6 min at 5 requests a minute, so a month takes about 2 h. A day is only published after midnight ET; `--end` defaults to
 yesterday ET, and the run stops cleanly at the first day not published yet. Rerun the same command
 after an interruption: it resumes where it stopped. A rerun with other settings on days already
 picked fails rather than mixing two rules. The thresholds are `--min-gap`, `--min-price`,
@@ -63,7 +70,8 @@ data/
 ├── splits/<day>.json             # splits executed that day
 ├── common/<day>.json             # common stocks listed that day, delisted ones included
 ├── picks/<day>.json              # settings, candidates (prev close, high, gap), picked tickers
-└── bars/<day>/<ticker>.parquet   # 1-min bars, UTC, extended hours included (04:00–20:00 ET)
+├── bars/<day>/<ticker>.parquet   # 1-min bars, UTC, extended hours included (04:00–20:00 ET)
+└── past/<day>/<ticker>.parquet   # the same, over the 5 sessions before, in the day's prices
 ```
 
 ## Replay
@@ -93,6 +101,12 @@ intraday volatility follows a U; `asym` turns its symmetric averaging off, which
 fading pump and a rebounding crash mirror images; `clock-asym` does both. On October none beat
 `log-capped`: the clock changes nothing in any slot of the day, and without the symmetric averaging
 every horizon gets worse. They stay to reproduce the measure.
+
+`--past-days N` (0 to 5, 0 by default) puts the N sessions before the day in front of the context,
+each from 4:00 to its close, the close carried over the night: without them Timestral never sees the
+previous close, so not the gap the ticker was picked for. A name that traded on fewer sessions gets
+the missing ones as NaN. The clock restarts every day. The model name gets `-pastN`, e.g.
+`timestral-28M-log-capped-past3`; a day whose past sessions are not fetched yet is skipped.
 
 The first run downloads the weights from Hugging Face. A day already replayed for a model is
 skipped, so a rerun resumes.
@@ -136,7 +150,9 @@ A local page to follow the runs without reading logs or parquet files, served fr
 (plain HTML, CSS and JavaScript, no build step) on `localhost` only:
 
 - **progress**: where a running `ts-fetch` or `ts-replay` is (day, ticker or cut), refreshed every
-  2 s from `data/status/<job>.json`. A job killed without writing its end shows as **lost**;
+  2 s from `data/status/<job>.json`. A job killed without writing its end shows as **lost**. The
+  fetch also shows its length, known at the start since the quota paces it: the requests still to
+  make given what `data/` holds, 12 s each, with the time it should end;
 - **forecast**: for a model, a day and a ticker, the price through the session with a cut's 10–90 %
   and 25–75 % bands drawn ahead of it, the random walk's band next to it, and whether the real price
   landed inside;

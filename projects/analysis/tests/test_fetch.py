@@ -1,11 +1,24 @@
-from datetime import date
+import json
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from ts_analysis.fetch import PicksMismatch, backfill, fetch_day, main, previous_session, weekdays
+
+from ts_analysis.fetch import (
+    PAST_LOOKBACK,
+    PicksMismatch,
+    backfill,
+    fetch_day,
+    main,
+    past_sessions,
+    planned_requests,
+    previous_session,
+    weekdays,
+)
 from ts_analysis.massive import DayNotPublished
 from ts_analysis.selection import GapRule
-from ts_analysis.store import Store
+from ts_analysis.series import ET
+from ts_analysis.store import Store, bars_frame
 
 THU = date(2026, 10, 22)
 FRI = date(2026, 10, 23)
@@ -46,8 +59,8 @@ class FakeSource:
             raise DayNotPublished(day.isoformat())
         return GROUPED.get(day, [])
 
-    def minute_bars(self, ticker, day):
-        self.calls.append(("bars", ticker, day))
+    def minute_bars(self, ticker, start, end, adjusted=False):
+        self.calls.append(("bars", ticker, start, end, adjusted))
         return [BAR]
 
     def splits(self, day):
@@ -140,7 +153,80 @@ def test_a_rerun_resumes_the_bars_missing_from_an_interrupted_day(tmp_path):
     store.bars_path(MON, "FFIE").unlink()
     rerun = FakeSource()
     fetch_monday(store, rerun)
-    assert rerun.calls == [("bars", "FFIE", MON)]
+    assert rerun.calls == [("bars", "FFIE", MON, MON, False)]
+
+
+def test_the_past_sessions_come_in_one_adjusted_request_over_the_days_before(tmp_path):
+    source = FakeSource()
+    fetch_monday(Store(tmp_path), source)
+    assert ("bars", "FFIE", MON - timedelta(days=PAST_LOOKBACK), MON, True) in source.calls
+
+
+def test_a_rerun_fetches_the_past_sessions_of_a_day_stored_before_they_existed(tmp_path):
+    store = Store(tmp_path)
+    fetch_monday(store)
+    store.past_path(MON, "FFIE").unlink()
+    rerun = FakeSource()
+    fetch_monday(store, rerun)
+    assert rerun.calls == [("bars", "FFIE", MON - timedelta(days=PAST_LOOKBACK), MON, True)]
+
+
+def minute(day: date, clock: str, close: float, volume: float) -> dict:
+    start = datetime.combine(day, time.fromisoformat(clock), tzinfo=ET)
+    return {"t": int(start.timestamp() * 1000), "o": close, "h": close, "l": close, "c": close, "v": volume, "vw": close, "n": 9}
+
+
+# MULN reverse-splits 1:10 on Friday, between Thursday and the Monday it gaps, and again 1:4 the
+# Wednesday after, before the fetch. Raw, it closes $0.42 Thursday and trades $4.40 Monday.
+RAW_MONDAY = bars_frame([minute(MON, "09:30", 4.40, 50_000), minute(MON, "09:31", 4.52, 30_000)])
+ADJUSTED = bars_frame(
+    [
+        minute(THU, "15:59", 0.42 * 10 * 4, 125_000 / 40),
+        minute(FRI, "15:59", 4.30 * 4, 9_000 / 4),
+        minute(MON, "09:30", 4.40 * 4, 50_000 / 4),
+        minute(MON, "09:31", 4.52 * 4, 30_000 / 4),
+    ]
+)
+
+
+def test_a_split_inside_the_window_does_not_show_up_as_a_price_jump():
+    past = past_sessions(ADJUSTED, RAW_MONDAY, MON, sessions=5)
+    assert past["close"].tolist() == pytest.approx([4.20, 4.30])
+
+
+def test_a_split_after_the_day_is_undone_so_the_past_meets_the_raw_day_prices_and_volumes():
+    past = past_sessions(ADJUSTED, RAW_MONDAY, MON, sessions=5)
+    assert (past["close"].iloc[-1], past["volume"].iloc[-1]) == (pytest.approx(4.30), pytest.approx(9_000))
+
+
+def test_only_the_last_sessions_before_the_day_are_kept():
+    past = past_sessions(ADJUSTED, RAW_MONDAY, MON, sessions=1)
+    assert past["time"].dt.tz_convert(ET).dt.date.tolist() == [FRI]
+
+
+def test_past_sessions_that_cannot_be_matched_to_the_raw_day_are_not_guessed():
+    assert past_sessions(ADJUSTED.iloc[:2], RAW_MONDAY, MON, sessions=5) is None
+
+
+def test_the_planned_requests_count_what_a_picked_day_misses_and_a_full_day_for_a_new_one(tmp_path):
+    store = Store(tmp_path)
+    fetch_monday(store)
+    store.past_path(MON, "FFIE").unlink()
+    assert planned_requests(store, [MON, TUE], per_day=10) == 1 + 8 + 2 * 10
+
+
+def test_a_day_known_to_be_a_holiday_plans_no_request(tmp_path):
+    store = Store(tmp_path)
+    thanksgiving = date(2026, 11, 26)
+    store.save_grouped(thanksgiving, [])
+    assert planned_requests(store, [thanksgiving], per_day=10) == 0
+
+
+def test_the_backfill_records_its_planned_requests_and_their_time_at_the_quota(tmp_path):
+    store = Store(tmp_path)
+    backfill(FakeSource(), store, TUE, TUE, GapRule(), per_day=10, seed="s")
+    status = json.loads((tmp_path / "status" / "fetch.json").read_text())
+    assert (status["requests"], status["estimated_s"]) == (28, 28 * 12)
 
 
 def test_a_rerun_with_other_settings_fails_instead_of_silently_keeping_the_old_picks(tmp_path):

@@ -76,6 +76,10 @@ def test_each_wrapping_is_stored_under_its_own_model_name_and_the_log_one_keeps_
     assert names == ["timestral-28M", "timestral-28M-raw", "timestral-28M-raw-nan", "timestral-28M-log-capped"]
 
 
+def test_a_context_with_past_sessions_is_stored_under_its_own_model_name():
+    assert Timestral("28M", "log-capped", past_days=3, model=FakeTimestral()).name == "timestral-28M-log-capped-past3"
+
+
 def test_the_wrapping_never_rewrites_the_grid_it_was_given():
     before = LOG_CLOSE.copy()
     wrapped("raw-nan")
@@ -90,6 +94,14 @@ def test_the_clock_covers_the_context_and_the_horizon_from_0_at_the_open_to_the_
     assert known.shape == (2, 1, CLOSE)
     assert (known[:, 0, OPEN], known[:, 0, -1]) == (pytest.approx(0.0), pytest.approx(389 / 390))
     assert known[0, 0, 0] < 0  # 4:00, before the open
+
+
+def test_over_past_sessions_the_clock_restarts_every_day():
+    fake = FakeTimestral()
+    log_close = np.log(np.full((1, CLOSE + OPEN), 2.40))  # Friday in full, then Monday cut at 9:30
+    Timestral("28M", "clock", model=fake).forecast(log_close, np.ones((1, CLOSE + OPEN)), length=5)
+    known = fake.calls[0]["known"][0, 0]
+    np.testing.assert_array_equal(known[CLOSE:], known[: OPEN + 5])
 
 
 def test_the_clock_holds_only_the_time_never_a_price():

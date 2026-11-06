@@ -94,10 +94,11 @@ class MassiveClient:
             raise RuntimeError(f"Unexpected grouped daily response for {day}: {payload.get('status')}")
         return payload.get("results") or []
 
-    def minute_bars(self, ticker: str, day: date) -> list[dict]:
+    def minute_bars(self, ticker: str, start: date, end: date, adjusted: bool = False) -> list[dict]:
+        """Every 1-min bar of the range in one request, up to 50,000: about 50 sessions of 16 hours."""
         payload = self._get(
-            f"/v2/aggs/ticker/{ticker}/range/1/minute/{day.isoformat()}/{day.isoformat()}",
-            {"adjusted": "false", "sort": "asc", "limit": 50000},
+            f"/v2/aggs/ticker/{ticker}/range/1/minute/{start.isoformat()}/{end.isoformat()}",
+            {"adjusted": str(adjusted).lower(), "sort": "asc", "limit": 50000},
         )
         return payload.get("results") or []
 

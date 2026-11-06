@@ -12,7 +12,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from ts_analysis.fetch import last_published_day, weekdays
+from ts_analysis.fetch import PAST_SESSIONS, last_published_day, weekdays
 from ts_analysis.series import CLOSE, OPEN, Grid, clock_of, minute_grid
 from ts_analysis.status import Status
 from ts_analysis.store import Store
@@ -87,13 +87,16 @@ WRAPPINGS = {
 
 def session_clock(steps: int) -> np.ndarray:
     """The share of the session elapsed at each grid slot: 0 at 9:30, 1 at 16:00, negative before the
-    open. The grid starts at 4:00 for every ticker, so the slot index is the clock."""
-    return (np.arange(steps) - OPEN) / (CLOSE - OPEN)
+    open, restarting every day. Every grid starts at 4:00 and each day takes CLOSE slots, so the slot
+    index modulo CLOSE is the clock."""
+    return (np.arange(steps) % CLOSE - OPEN) / (CLOSE - OPEN)
 
 
 class Timestral:
-    def __init__(self, size: str, wrapping: str = "log", model=None):
+    def __init__(self, size: str, wrapping: str = "log", past_days: int = 0, model=None):
         self.name = f"timestral-{size}" if wrapping == "log" else f"timestral-{size}-{wrapping}"
+        if past_days:
+            self.name += f"-past{past_days}"
         self.wrapping = WRAPPINGS[wrapping]
         if model is None:
             from timestral import TimestralForecaster
@@ -150,7 +153,7 @@ def replay_day(
         if on_cut:
             on_cut(clock_of(cut), done, len(day_cuts))
         seen = {ticker: grid.seen_at(cut) for ticker, grid in grids.items()}
-        tickers = [ticker for ticker, grid in seen.items() if not np.isnan(grid.log_close[-1])]
+        tickers = [ticker for ticker, grid in grids.items() if grid.traded_by(cut)]
         if not tickers:
             continue
         log_close = np.stack([seen[ticker].log_close for ticker in tickers])
@@ -183,18 +186,25 @@ def replay_day(
     return rows
 
 
-def day_grids(store: Store, day: date) -> dict[str, Grid]:
+def day_grids(store: Store, day: date, past_days: int = 0) -> dict[str, Grid]:
     picks = store.load_picks(day)
     if picks is None:
         return {}
     return {
-        ticker: minute_grid(store.load_bars(day, ticker), day)
+        ticker: minute_grid(
+            store.load_bars(day, ticker), day, store.load_past(day, ticker) if past_days else None, past_days
+        )
         for ticker in picks["picked"]
         if store.has_bars(day, ticker)
     }
 
 
-def replay(store: Store, start: date, end: date, models: list[Forecaster], step: int) -> None:
+def missing_past(store: Store, day: date) -> list[str]:
+    picks = store.load_picks(day) or {"picked": []}
+    return [ticker for ticker in picks["picked"] if store.has_bars(day, ticker) and not store.has_past(day, ticker)]
+
+
+def replay(store: Store, start: date, end: date, models: list[Forecaster], step: int, past_days: int = 0) -> None:
     days = list(weekdays(start, end))
     started = perf_counter()
     info = {"start": start.isoformat(), "end": end.isoformat(), "days": len(days), "models": [m.name for m in models]}
@@ -205,7 +215,12 @@ def replay(store: Store, start: date, end: date, models: list[Forecaster], step:
             if not todo:
                 log.info("%s day %d/%d already replayed", day, number, len(days))
                 continue
-            grids = day_grids(store, day)
+            if past_days and (missing := missing_past(store, day)):
+                log.warning(
+                    "%s day %d/%d no past sessions for %s: run ts-fetch first", day, number, len(days), " ".join(missing)
+                )
+                continue
+            grids = day_grids(store, day, past_days)
             if not grids:
                 log.info("%s day %d/%d no stored bars", day, number, len(days))
                 continue
@@ -233,6 +248,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default="28M", choices=["5M", "28M", "123M", "209M"])
     parser.add_argument("--wrapping", default="log-capped", choices=list(WRAPPINGS), help="how the prices reach Timestral")
     parser.add_argument("--step", type=int, default=5, help="minutes between two cuts")
+    parser.add_argument(
+        "--past-days", type=int, default=0, choices=range(PAST_SESSIONS + 1), help="sessions before the day in the context"
+    )
     args = parser.parse_args(argv)
     if args.start > args.end:
         parser.error(f"--start {args.start} is after --end {args.end}")
@@ -241,9 +259,9 @@ def main(argv: list[str] | None = None) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     log.info("loading Timestral-%s, %s wrapping (downloaded from Hugging Face on the first run)", args.model, args.wrapping)
     started = perf_counter()
-    model = Timestral(args.model, args.wrapping)
+    model = Timestral(args.model, args.wrapping, args.past_days)
     log.info("loaded in %.1f s", perf_counter() - started)
-    replay(Store(args.data), args.start, args.end, [Flat(), RandomWalk(), model], args.step)
+    replay(Store(args.data), args.start, args.end, [Flat(), RandomWalk(), model], args.step, args.past_days)
 
 
 if __name__ == "__main__":
