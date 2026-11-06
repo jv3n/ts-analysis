@@ -123,6 +123,7 @@ tail is wide in log space, and turned into a price it reaches absurd values (×6
 
 ```bash
 uv run ts-score   # --call 0.05: the median move that makes a call; --big 0.05: the real move that makes a big one
+uv run ts-score --start 2026-10-28 --end 2026-11-04   # only those days, e.g. a held-out week
 ```
 
 Reads every stored forecast and writes `data/reports/score.md`, by horizon (+5, +15, +30, close) and
@@ -139,6 +140,12 @@ by model:
 - **big moves**: the cuts followed by a real move of 5 % or more, picked on the real move only: did
   the median lean the right way (also on the cuts where the move had not started yet), and was the
   band wider than the ticker-day's usual one just before?
+
+The cuts of one ticker-day share its fate, so the forecasts are far from independent: hundreds of
+thousands of them are closer to a few hundred samples. The skill, coverage, direction and call hit
+rates get a **95 % interval** from a bootstrap over the ticker-days (`--resamples 1000`, `--seed 0`),
+every model resampled on the same draws, so a `skill_95` wholly above 0 beats the random walk. The
+calls also say how many ticker-days they came from.
 
 ## Monitor
 

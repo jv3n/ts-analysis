@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -60,15 +61,111 @@ def figures(group: pd.DataFrame, call: float) -> dict:
     }
 
 
+def _unit(frame: pd.DataFrame) -> pd.Series:
+    return frame["day"].astype(str) + " " + frame["ticker"]
+
+
 def scoreboard(forecasts: pd.DataFrame, call: float = 0.05) -> pd.DataFrame:
+    """The skill compares each model with the random walk on that model's ticker-days only: models
+    replayed over different days would otherwise be set against different days."""
     frame = with_outcome(forecasts)
-    rows = [
-        {"model": model, "bucket": bucket, **figures(group, call)}
-        for (model, bucket), group in frame.groupby(["model", "bucket"])
-    ]
+    frame["unit"] = _unit(frame)
+    walk = frame[frame["model"] == "random-walk"].assign(loss=lambda f: pinball(f))
+    walk = walk.groupby(["bucket", "unit"])["loss"].agg(["sum", "count"])
+    rows = []
+    for (model, bucket), group in frame.groupby(["model", "bucket"]):
+        row = {"model": model, "bucket": bucket, **figures(group, call)}
+        units = group["unit"].unique()
+        same = walk.loc[bucket].reindex(units).dropna() if bucket in walk.index.get_level_values(0) else walk.iloc[:0]
+        reference = same["sum"].sum() / same["count"].sum() if same["count"].sum() else float("nan")
+        row["skill"] = 1 - row["pinball"] / reference
+        rows.append(row)
     board = pd.DataFrame(rows)
-    reference = board[board["model"] == "random-walk"].set_index("bucket")["pinball"]
-    board["skill"] = 1 - board["pinball"] / board["bucket"].map(reference)
+    board["bucket"] = pd.Categorical(board["bucket"], BUCKETS, ordered=True)
+    return board.sort_values(["bucket", "model"]).reset_index(drop=True)
+
+
+UNIT_SUMS = ["n", "pinball", "inside", "says", "direction_hit", "down", "down_hit", "up", "up_hit"]
+
+
+def unit_sums(frame: pd.DataFrame, call: float) -> pd.DataFrame:
+    """Per model, bucket and ticker-day, the sums every rate is made of, so a resample only reweighs
+    ticker-days."""
+    real, median = frame["real"], frame["q50"]
+    says = (median != 0) & (real != 0)
+    down, up = median <= np.log1p(-call), median >= np.log1p(call)
+    parts = pd.DataFrame(
+        {
+            "model": frame["model"],
+            "bucket": frame["bucket"],
+            "unit": _unit(frame),
+            "n": 1,
+            "pinball": pinball(frame),
+            "inside": (frame["q10"] <= real) & (real <= frame["q90"]),
+            "says": says,
+            "direction_hit": says & (np.sign(median) == np.sign(real)),
+            "down": down,
+            "down_hit": down & (real < 0),
+            "up": up,
+            "up_hit": up & (real > 0),
+        }
+    )
+    return parts.groupby(["model", "bucket", "unit"])[UNIT_SUMS].sum().astype(float)
+
+
+def resample_weights(units: int, resamples: int, seed: int) -> np.ndarray:
+    """How many times each ticker-day is drawn in each resample, (resamples, units): whole ticker-days
+    are drawn, since the cuts of one ticker-day share its fate and are far from independent."""
+    draws = np.random.default_rng(seed).integers(0, units, size=(resamples, units))
+    return np.stack([np.bincount(row, minlength=units) for row in draws]).astype(float)
+
+
+def _span(values: np.ndarray, level: float) -> tuple[float, float]:
+    values = values[np.isfinite(values)]
+    if not len(values):
+        return float("nan"), float("nan")
+    tail = (1 - level) / 2 * 100
+    low, high = np.percentile(values, [tail, 100 - tail])
+    return float(low), float(high)
+
+
+def intervals(
+    forecasts: pd.DataFrame, call: float = 0.05, resamples: int = 1000, seed: int = 0, level: float = 0.95
+) -> pd.DataFrame:
+    """Percentile bootstrap over the ticker-days. Every model is resampled on the same draws, so the
+    skill interval is paired: a model equal to the random walk gets exactly 0."""
+    sums = unit_sums(with_outcome(forecasts), call)
+    units = sorted(sums.index.get_level_values("unit").unique())
+    weights = resample_weights(len(units), resamples, seed)
+
+    def drawn(model: str, bucket: str) -> pd.DataFrame:
+        return sums.loc[(model, bucket)].reindex(units, fill_value=0.0)
+
+    def rate(group: pd.DataFrame, hits: str, cases: str) -> np.ndarray:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return (weights @ group[hits].to_numpy()) / (weights @ group[cases].to_numpy())
+
+    pairs = sums.index.droplevel("unit").unique()
+    rows = []
+    for model, bucket in pairs:
+        group = drawn(model, bucket)
+        row = {"model": model, "bucket": bucket, "down_days": int((group["down"] > 0).sum()),
+               "up_days": int((group["up"] > 0).sum())}
+        if ("random-walk", bucket) in pairs:
+            walk = drawn("random-walk", bucket).mul(group["n"] > 0, axis=0)
+            reference = rate(walk, "pinball", "n")
+            row["skill_low"], row["skill_high"] = _span(1 - rate(group, "pinball", "n") / reference, level)
+        else:
+            row["skill_low"] = row["skill_high"] = float("nan")
+        for name, hits, cases in [
+            ("coverage_80", "inside", "n"),
+            ("direction", "direction_hit", "says"),
+            ("down_hit", "down_hit", "down"),
+            ("up_hit", "up_hit", "up"),
+        ]:
+            row[f"{name}_low"], row[f"{name}_high"] = _span(rate(group, hits, cases), level)
+        rows.append(row)
+    board = pd.DataFrame(rows)
     board["bucket"] = pd.Categorical(board["bucket"], BUCKETS, ordered=True)
     return board.sort_values(["bucket", "model"]).reset_index(drop=True)
 
@@ -144,14 +241,30 @@ def _table(frame: pd.DataFrame, formats: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def report(forecasts: pd.DataFrame, call: float, big: float = 0.05) -> str:
-    board = scoreboard(forecasts, call)
+def _spans(board: pd.DataFrame, names: dict[str, str]) -> pd.DataFrame:
+    board = board.copy()
+    for name, fmt in names.items():
+        low, high = board.pop(f"{name}_low"), board.pop(f"{name}_high")
+        board[f"{name}_95"] = [
+            "–" if np.isnan(lo) else f"[{fmt.format(lo)}, {fmt.format(hi)}]" for lo, hi in zip(low, high)
+        ]
+    return board
+
+
+def report(forecasts: pd.DataFrame, call: float, big: float = 0.05, resamples: int = 1000, seed: int = 0) -> str:
+    pct = "{:.1%}"
+    spans = intervals(forecasts, call, resamples, seed)
+    spans = _spans(spans, {"skill": "{:+.1%}", "coverage_80": pct, "direction": pct, "down_hit": pct, "up_hit": pct})
+    board = scoreboard(forecasts, call).merge(spans, on=["model", "bucket"])
     days = forecasts["day"].nunique()
     tickers = forecasts[["day", "ticker"]].drop_duplicates().shape[0]
-    pct = "{:.1%}"
-    main = board[["bucket", "model", "n", "pinball", "skill", "mae", "mdae", "coverage_80", "direction", "real_down"]]
+    main = board[
+        ["bucket", "model", "n", "pinball", "skill", "skill_95", "mae", "mdae", "coverage_80", "coverage_80_95",
+         "direction", "direction_95", "real_down"]
+    ]
     calls = board[
-        ["bucket", "model", "down_calls", "down_hit", "down_real", "up_calls", "up_hit", "up_real", "sure_calls", "sure_hit"]
+        ["bucket", "model", "down_calls", "down_days", "down_hit", "down_hit_95", "down_real", "up_calls", "up_days",
+         "up_hit", "up_hit_95", "up_real", "sure_calls", "sure_hit"]
     ]
     coverage = quantile_coverage(forecasts)[["q10", "q25", "q50", "q75", "q90"]].reset_index()
     moves = big_moves(forecasts, big)
@@ -160,7 +273,9 @@ def report(forecasts: pd.DataFrame, call: float, big: float = 0.05) -> str:
             "# Score",
             f"{days} days, {tickers} ticker-days, {len(forecasts)} forecasts. "
             "Moves are log returns from the last price at the cut, the scale the model forecasts in; "
-            "`mae` and the calls' `real` read as %.",
+            "`mae` and the calls' `real` read as %. "
+            f"`*_95`: 95 % interval over {resamples} resamples of the ticker-days (seed {seed}), the unit the "
+            "forecasts are independent at; a `skill_95` wholly above 0 beats the random walk.",
             "## Accuracy",
             "`pinball`: mean quantile loss on log moves, lower is better. `skill`: 1 − pinball / random walk's, above 0 "
             "beats it. `mae` / `mdae`: mean / median |median − real|, the median one robust to a few wild names. `coverage_80`: real inside the 10–90 % band, 80 % expected. "
@@ -173,7 +288,7 @@ def report(forecasts: pd.DataFrame, call: float, big: float = 0.05) -> str:
             "## Calls",
             f"A call: the median says {call:.0%} down or up or more (`down_*`, `up_*`), or the band sits "
             "wholly on one side of 0, 90 % sure (`sure_*`). `hit`: the real move went that way. "
-            "`real`: mean real move on those calls.",
+            "`real`: mean real move on those calls. `days`: the ticker-days the calls came from.",
             _table(calls, {"down_hit": pct, "down_real": "{:+.1%}", "up_hit": pct, "up_real": "{:+.1%}", "sure_hit": pct}),
             "## Calibration",
             "Share of real moves at or below each quantile: q10 should read 10 %, q90 90 %.",
@@ -199,12 +314,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--call", type=float, default=0.05, help="median move that makes a call")
     parser.add_argument("--big", type=float, default=0.05, help="real move that makes a big move")
+    parser.add_argument("--start", type=date.fromisoformat, help="first day scored")
+    parser.add_argument("--end", type=date.fromisoformat, help="last day scored")
+    parser.add_argument("--resamples", type=int, default=1000, help="bootstrap resamples of the ticker-days")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
 
     forecasts = load_forecasts(args.data)
     if forecasts.empty:
         parser.exit(1, "error: no forecasts in data/forecasts, run ts-replay first\n")
-    text = report(forecasts, args.call, args.big)
+    day = forecasts["day"].astype(str)
+    start, end = args.start or date.min, args.end or date.max
+    forecasts = forecasts[(day >= start.isoformat()) & (day <= end.isoformat())]
+    if forecasts.empty:
+        parser.exit(1, "error: no forecasts between --start and --end\n")
+    text = report(forecasts, args.call, args.big, args.resamples, args.seed)
     path = args.data / "reports" / "score.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")

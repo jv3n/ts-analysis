@@ -3,7 +3,18 @@ import pandas as pd
 import pytest
 
 from ts_analysis.replay import QUANTILES
-from ts_analysis.score import COLUMNS, big_moves, main, pinball, quantile_coverage, report, scoreboard, with_outcome
+from ts_analysis.score import (
+    COLUMNS,
+    big_moves,
+    intervals,
+    main,
+    pinball,
+    quantile_coverage,
+    report,
+    resample_weights,
+    scoreboard,
+    with_outcome,
+)
 
 
 def forecast(model: str, actual: float, band: tuple[float, float, float], horizon: int = 15, to_close: bool = False):
@@ -136,3 +147,82 @@ def test_a_band_wider_than_the_ticker_day_s_usual_one_before_a_big_move_reads_ab
 def test_the_report_has_a_big_moves_section():
     rows = [at("10:00", 2.40, 2.66, (-0.05, 0.01, 0.05)), at("10:00", 2.40, 2.66, (-0.05, 0.0, 0.05), model="random-walk")]
     assert "## Big moves" in report(pd.DataFrame(rows), 0.05, 0.05)
+
+
+def on(ticker: str, day: str, cut: str, row: dict) -> dict:
+    return row | {"ticker": ticker, "day": day, "cut": cut}
+
+
+def interval_row(rows: list[dict], model: str = "timestral-28M", **options) -> pd.Series:
+    board = intervals(pd.DataFrame(rows), **options)
+    return board[board["model"] == model].iloc[0]
+
+
+def test_each_resample_draws_as_many_ticker_days_as_there_are():
+    weights = resample_weights(units=7, resamples=50, seed=0)
+    assert weights.shape == (50, 7) and (weights.sum(axis=1) == 7).all()
+
+
+def test_the_resampling_draws_whole_ticker_days_never_single_cuts():
+    # FFIE stays inside its band all day, MULN outside all day: drawn by cut, 156 cuts would pin the
+    # coverage near 50 %; drawn by ticker-day, a resample can hold FFIE twice or MULN twice.
+    cuts = [f"{9 + (30 + 5 * i) // 60:02d}:{(30 + 5 * i) % 60:02d}" for i in range(78)]
+    band = (-0.05, 0.0, 0.05)
+    rows = [on("FFIE", "2026-10-26", c, forecast("timestral-28M", 2.41, band)) for c in cuts]
+    rows += [on("MULN", "2026-10-26", c, forecast("timestral-28M", 3.10, band)) for c in cuts]
+    row = interval_row(rows, resamples=200)
+    assert (row["coverage_80_low"], row["coverage_80_high"]) == (0.0, 1.0)
+
+
+def test_a_model_equal_to_the_random_walk_has_a_skill_interval_of_exactly_zero():
+    rows = [
+        on(ticker, "2026-10-26", "10:00", forecast(model, actual, (-0.05, 0.0, 0.05)))
+        for ticker, actual in [("FFIE", 2.30), ("MULN", 2.52), ("GCTK", 2.41)]
+        for model in ("random-walk", "timestral-28M")
+    ]
+    row = interval_row(rows, resamples=100)
+    assert (row["skill_low"], row["skill_high"]) == (pytest.approx(0, abs=1e-12), pytest.approx(0, abs=1e-12))
+
+
+def test_the_same_seed_gives_the_same_intervals():
+    rows = [
+        on(ticker, day, "10:00", forecast(model, actual, band))
+        for ticker, day, actual in [("FFIE", "2026-10-26", 2.30), ("MULN", "2026-10-27", 2.52), ("GCTK", "2026-10-28", 2.41)]
+        for model, band in [("random-walk", (-0.05, 0.0, 0.05)), ("timestral-28M", (-0.08, -0.01, 0.04))]
+    ]
+    first, again = intervals(pd.DataFrame(rows), seed=7), intervals(pd.DataFrame(rows), seed=7)
+    pd.testing.assert_frame_equal(first, again)
+
+
+def test_down_calls_from_one_ticker_day_count_as_one_day():
+    rows = [on("FFIE", "2026-10-26", c, forecast("timestral-28M", 2.10, (-0.30, -0.10, 0.0))) for c in ("10:00", "10:05", "10:10")]
+    rows.append(on("MULN", "2026-10-26", "10:00", forecast("timestral-28M", 2.10, (-0.30, -0.10, 0.0))))
+    assert interval_row(rows, resamples=10)["down_days"] == 2
+
+
+def test_the_report_gives_the_skill_interval_next_to_the_skill():
+    rows = [
+        on(ticker, "2026-10-26", "10:00", forecast(model, actual, (-0.05, 0.0, 0.05)))
+        for ticker, actual in [("FFIE", 2.30), ("MULN", 2.52)]
+        for model in ("random-walk", "timestral-28M")
+    ]
+    assert "skill_95" in report(pd.DataFrame(rows), 0.05, resamples=20)
+
+
+def test_the_cli_scores_only_the_days_between_start_and_end(tmp_path, capsys):
+    folder = tmp_path / "forecasts" / "random-walk"
+    folder.mkdir(parents=True)
+    for day in ("2026-10-27", "2026-10-28"):
+        row = on("FFIE", day, "10:00", forecast("random-walk", 2.30, (-0.05, 0.0, 0.05)))
+        pd.DataFrame([row]).to_parquet(folder / f"{day}.parquet", index=False)
+    main(["--data", str(tmp_path), "--start", "2026-10-28", "--resamples", "10"])
+    assert "1 days, 1 ticker-days, 1 forecasts" in capsys.readouterr().out
+
+
+def test_the_skill_compares_a_model_with_the_random_walk_on_its_own_ticker_days_only():
+    # The random walk also ran on 2026-10-28, a wild day the model never saw: it must not flatter the model.
+    band = (-0.05, 0.0, 0.05)
+    rows = [on("FFIE", "2026-10-27", "10:00", forecast(m, 2.30, band)) for m in ("random-walk", "timestral-28M")]
+    rows.append(on("MULN", "2026-10-28", "10:00", forecast("random-walk", 4.80, band)))
+    assert board_row(rows)["skill"] == pytest.approx(0, abs=1e-12)
+    assert interval_row(rows, resamples=50)["skill_high"] == pytest.approx(0, abs=1e-12)
