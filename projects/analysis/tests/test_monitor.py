@@ -37,7 +37,7 @@ def store(tmp_path) -> Store:
         },
     )
     store.save_bars(MON, "FFIE", ffie_bars())
-    replay(store, MON, MON, [Flat(), RandomWalk()], step=30)
+    replay(store, MON, MON, [Flat(), RandomWalk()], step=30, from_entry=False)
     return store
 
 

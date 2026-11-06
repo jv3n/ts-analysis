@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import date, time
 
 import numpy as np
 import pandas as pd
@@ -55,25 +55,35 @@ def scanner_entry(bars: pd.DataFrame, prev_close: float, rule: ScannerRule = Sca
     return "push", int(minutes[reached.idxmax()])
 
 
+def day_entries(store: Store, day: date) -> dict[str, tuple[str, int]]:
+    """The setup and entry minute of each of the day's picks with stored bars; one that never enters in
+    the stored hours is left out. Days picked on the day's high (`gap`) enter at their threshold."""
+    picks = store.load_picks(day)
+    if picks is None:
+        return {}
+    prev = {c["ticker"]: c["prev_close"] for c in picks["candidates"]}
+    scanner = picks["rule"].get("name") == "scanner"
+    found = {}
+    for ticker in picks["picked"]:
+        if not store.has_bars(day, ticker):
+            continue
+        bars = store.load_bars(day, ticker)
+        if scanner:
+            entry = scanner_entry(bars, prev[ticker], ScannerRule(**picks["rule"]))
+        else:
+            minute = entry_minute(bars, prev[ticker], picks["rule"]["min_gap"])
+            entry = None if minute is None else ("gap", minute)
+        if entry is not None:
+            found[ticker] = entry
+    return found
+
+
 def entries(store: Store) -> pd.DataFrame:
-    """The setup and entry minute of every picked ticker-day with stored bars; one that never enters
-    in the stored hours is left out. Days picked on the day's high (`gap`) enter at their threshold."""
-    rows = []
-    for day in store.days("picks"):
-        picks = store.load_picks(day)
-        prev = {c["ticker"]: c["prev_close"] for c in picks["candidates"]}
-        scanner = picks["rule"].get("name") == "scanner"
-        for ticker in picks["picked"]:
-            if not store.has_bars(day, ticker):
-                continue
-            bars = store.load_bars(day, ticker)
-            if scanner:
-                found = scanner_entry(bars, prev[ticker], ScannerRule(**picks["rule"]))
-            else:
-                minute = entry_minute(bars, prev[ticker], picks["rule"]["min_gap"])
-                found = None if minute is None else ("gap", minute)
-            if found is not None:
-                rows.append({"day": day.isoformat(), "ticker": ticker, "setup": found[0], "entry": found[1]})
+    rows = [
+        {"day": day.isoformat(), "ticker": ticker, "setup": setup, "entry": minute}
+        for day in store.days("picks")
+        for ticker, (setup, minute) in day_entries(store, day).items()
+    ]
     return pd.DataFrame(rows, columns=["day", "ticker", "setup", "entry"])
 
 

@@ -12,6 +12,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
+from ts_analysis.entry import day_entries
 from ts_analysis.fetch import PAST_SESSIONS, last_published_day, weekdays
 from ts_analysis.series import CLOSE, OPEN, Grid, clock_of, minute_grid
 from ts_analysis.status import Status
@@ -21,6 +22,8 @@ log = logging.getLogger("ts_analysis.replay")
 
 QUANTILES = (0.01, 0.05, *(round(0.10 + 0.05 * i, 2) for i in range(17)), 0.95, 0.99)
 HORIZONS = (5, 15, 30)
+FORECAST_COLUMNS = ["model", "ticker", "day", "cut", "horizon", "to_close", "last", "actual"]
+FORECAST_COLUMNS += [f"q{round(q * 100):02d}" for q in QUANTILES] + ["ms_per_forecast"]
 VOL_WINDOW = 60
 
 
@@ -142,9 +145,11 @@ def replay_day(
     models: Iterable[Forecaster],
     step: int,
     on_cut: Callable[[str, int, int], None] | None = None,
+    entries: dict[str, int] | None = None,
 ) -> list[dict]:
     """Each model forecasts every ticker at every cut from what the cut sees; the grid is only read
-    past the cut to score the forecast."""
+    past the cut to score the forecast. With `entries`, a ticker is forecast only once its entry bar
+    has closed, and one without an entry never."""
     models = list(models)
     rows = []
     day_cuts = cuts(step)
@@ -157,7 +162,11 @@ def replay_day(
         if on_cut:
             on_cut(clock_of(cut), done, len(day_cuts))
         seen = {ticker: grid.seen_at(cut) for ticker, grid in grids.items()}
-        tickers = [ticker for ticker, grid in grids.items() if grid.traded_by(cut)]
+        tickers = [
+            ticker
+            for ticker, grid in grids.items()
+            if grid.traded_by(cut) and (entries is None or cut > entries.get(ticker, CLOSE))
+        ]
         if not tickers:
             continue
         log_close = np.stack([seen[ticker].log_close for ticker in tickers])
@@ -208,7 +217,15 @@ def missing_past(store: Store, day: date) -> list[str]:
     return [ticker for ticker in picks["picked"] if store.has_bars(day, ticker) and not store.has_past(day, ticker)]
 
 
-def replay(store: Store, start: date, end: date, models: list[Forecaster], step: int, past_days: int = 0) -> None:
+def replay(
+    store: Store,
+    start: date,
+    end: date,
+    models: list[Forecaster],
+    step: int,
+    past_days: int = 0,
+    from_entry: bool = True,
+) -> None:
     days = list(weekdays(start, end))
     started = perf_counter()
     info = {"start": start.isoformat(), "end": end.isoformat(), "days": len(days), "models": [m.name for m in models]}
@@ -233,7 +250,8 @@ def replay(store: Store, start: date, end: date, models: list[Forecaster], step:
             def on_cut(cut: str, done: int, total: int) -> None:
                 status.update(cut=cut, cut_number=done, cuts=total)
 
-            frame = pd.DataFrame(replay_day(day, grids, todo, step, on_cut))
+            entries = {t: minute for t, (_, minute) in day_entries(store, day).items()} if from_entry else None
+            frame = pd.DataFrame(replay_day(day, grids, todo, step, on_cut, entries), columns=FORECAST_COLUMNS)
             for model in todo:
                 rows = frame[frame["model"] == model.name]
                 store.save_forecasts(model.name, day, rows)
@@ -256,6 +274,9 @@ def main(argv: list[str] | None = None) -> None:
         "--past-days", type=int, default=PAST_SESSIONS, choices=range(PAST_SESSIONS + 1),
         help="sessions before the day in the context"
     )
+    parser.add_argument(
+        "--all-cuts", action="store_true", help="forecast every cut, also before the ticker reached its gap"
+    )
     args = parser.parse_args(argv)
     if args.start > args.end:
         parser.error(f"--start {args.start} is after --end {args.end}")
@@ -266,7 +287,9 @@ def main(argv: list[str] | None = None) -> None:
     started = perf_counter()
     model = Timestral(args.model, args.wrapping, args.past_days)
     log.info("loaded in %.1f s", perf_counter() - started)
-    replay(Store(args.data), args.start, args.end, [Flat(), RandomWalk(), model], args.step, args.past_days)
+    replay(
+        Store(args.data), args.start, args.end, [Flat(), RandomWalk(), model], args.step, args.past_days, not args.all_cuts
+    )
 
 
 if __name__ == "__main__":
