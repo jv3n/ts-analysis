@@ -153,7 +153,7 @@ A local page to follow the runs without reading logs or parquet files, served fr
   2 s from `data/status/<job>.json`. A job killed without writing its end shows as **lost**. The
   fetch also shows its length, known at the start since the quota paces it: the requests still to
   make given what `data/` holds, 12 s each, with the time it should end;
-- **forecast**: for a model, a day and a ticker, the price through the session with a cut's 10–90 %
+- **forecast**: for a day, a model replayed on it and a ticker, the price through the session with a cut's 10–90 %
   and 25–75 % bands drawn ahead of it, the random walk's band next to it, and whether the real price
   landed inside;
 - **replay**: the forecasts per day and model, and the time per forecast;

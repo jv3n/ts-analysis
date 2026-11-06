@@ -3,7 +3,9 @@
 const POLL_MS = 2000;
 const SESSION = 390;
 const BASELINES = ["flat", "random-walk"];
-const W = 1000, H = 380, M = { top: 12, right: 16, bottom: 28, left: 60 };
+// W follows the chart's width at each draw, so a wide screen gets a longer chart, not a taller one.
+let W = 1000;
+const H = 380, M = { top: 12, right: 16, bottom: 28, left: 60 };
 
 const $ = (id) => document.getElementById(id);
 const state = { fetch: null, replay: null, view: null, compare: null, statusKey: "" };
@@ -146,8 +148,7 @@ $("replay").addEventListener("click", (event) => {
   const link = event.target.closest("a[data-model]");
   if (!link) return;
   event.preventDefault();
-  $("model").value = link.dataset.model;
-  fillDays(link.dataset.day);
+  fillDays(link.dataset.day, link.dataset.model);
   loadView();
   $("pick").scrollIntoView({ behavior: "smooth" });
 });
@@ -164,16 +165,19 @@ function modelDays(model) {
   return state.replay.models.find((m) => m.model === model)?.days ?? [];
 }
 
-function fillModels() {
-  const names = state.replay.models.map((m) => m.model);
-  const preferred = names.find((n) => !BASELINES.includes(n));
-  setOptions($("model"), names, $("model").value || preferred);
-  fillDays();
+// Every replayed day is listed, even one only some models were run on: the day picks the models.
+function fillDays(wantedDay, wantedModel) {
+  const days = [...new Set(state.replay.models.flatMap((m) => m.days.map((d) => d.day)))].sort().reverse();
+  setOptions($("day"), days, wantedDay);
+  fillModels(wantedModel);
 }
 
-function fillDays(wanted) {
-  const days = modelDays($("model").value).map((d) => d.day).reverse();
-  setOptions($("day"), days, wanted);
+function fillModels(wanted) {
+  const day = $("day").value;
+  const names = state.replay.models.filter((m) => m.days.some((d) => d.day === day)).map((m) => m.model);
+  const current = $("model").value;
+  const preferred = names.includes(current) ? current : names.find((n) => !BASELINES.includes(n));
+  setOptions($("model"), names, names.includes(wanted) ? wanted : preferred);
   fillTickers();
 }
 
@@ -205,11 +209,16 @@ async function loadView() {
   drawForecast();
 }
 
-$("model").addEventListener("change", () => { fillDays(); loadView(); });
-$("day").addEventListener("change", () => { fillTickers(); loadView(); });
+$("day").addEventListener("change", () => { fillModels(); loadView(); });
+$("model").addEventListener("change", () => { fillTickers(); loadView(); });
 $("ticker").addEventListener("change", loadView);
 $("compare").addEventListener("change", loadView);
 $("cut").addEventListener("input", drawForecast);
+let resizing = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(resizing);
+  resizing = requestAnimationFrame(() => state.view && drawForecast());
+});
 $("prev").addEventListener("click", () => { $("cut").value = Number($("cut").value) - 1; drawForecast(); });
 $("next").addEventListener("click", () => { $("cut").value = Number($("cut").value) + 1; drawForecast(); });
 
@@ -230,6 +239,7 @@ function drawForecast() {
     $("legend").innerHTML = $("band-table").innerHTML = $("cut-label").textContent = "";
     return;
   }
+  W = Math.max(480, $("chart").clientWidth - 16);
   const cut = view.cuts[$("cut").value];
   const compareCut = state.compare?.cuts.find((c) => c.cut === cut.cut);
   $("cut-label").textContent = cut.cut;
@@ -327,7 +337,7 @@ async function refreshSummaries() {
   renderFetch(state.fetch);
   renderReplay(state.replay);
   const before = [$("model").value, $("day").value, $("ticker").value].join();
-  fillModels();
+  fillDays();
   if (!state.view || before !== [$("model").value, $("day").value, $("ticker").value].join()) await loadView();
 }
 
