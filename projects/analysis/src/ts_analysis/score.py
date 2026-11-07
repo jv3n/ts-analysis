@@ -67,8 +67,17 @@ def _unit(frame: pd.DataFrame) -> pd.Series:
     return frame["day"].astype(str) + " " + frame["ticker"]
 
 
-# Each skill column and the model it is set against; a missing reference leaves its column empty.
-REFERENCES = {"skill": "random-walk", "skill_cal": "random-walk-cal"}
+SKILLS = ["skill", "skill_cal"]
+
+
+def reference(skill: str, model: str) -> str:
+    """The model a skill sets `model` against; a missing reference leaves its column empty. `skill_cal`
+    reads the random walk corrected the same way as the model (`-cal`, `-cal-setup`), the pooled
+    correction for a raw model."""
+    if skill == "skill":
+        return "random-walk"
+    correction = model.find("-cal")
+    return "random-walk" + (model[correction:] if correction >= 0 else "-cal")
 
 
 def _mean_loss(losses: pd.DataFrame, units: pd.Index) -> float:
@@ -87,11 +96,11 @@ def scoreboard(forecasts: pd.DataFrame, call: float = 0.05) -> pd.DataFrame:
     for (model, bucket), group in frame.groupby(["model", "bucket"]):
         row = {"model": model, "bucket": bucket, **figures(group, call)}
         mine = losses.loc[(model, bucket)]
-        for name, reference in REFERENCES.items():
-            if (reference, bucket) not in losses.index.droplevel("unit"):
+        for name in SKILLS:
+            if (reference(name, model), bucket) not in losses.index.droplevel("unit"):
                 row[name] = float("nan")
                 continue
-            theirs = losses.loc[(reference, bucket)]
+            theirs = losses.loc[(reference(name, model), bucket)]
             shared = mine.index.intersection(theirs.index)
             row[name] = 1 - _mean_loss(mine, shared) / _mean_loss(theirs, shared)
         rows.append(row)
@@ -166,11 +175,11 @@ def intervals(
         group = drawn(model, bucket)
         row = {"model": model, "bucket": bucket, "down_days": int((group["down"] > 0).sum()),
                "up_days": int((group["up"] > 0).sum())}
-        for name, reference in REFERENCES.items():
-            if (reference, bucket) not in pairs:
+        for name in SKILLS:
+            if (reference(name, model), bucket) not in pairs:
                 row[f"{name}_low"] = row[f"{name}_high"] = float("nan")
                 continue
-            theirs = drawn(reference, bucket)
+            theirs = drawn(reference(name, model), bucket)
             shared = (group["n"] > 0) & (theirs["n"] > 0)
             ratio = rate(group.mul(shared, axis=0), "pinball", "n") / rate(theirs.mul(shared, axis=0), "pinball", "n")
             row[f"{name}_low"], row[f"{name}_high"] = _span(1 - ratio, level)
@@ -197,7 +206,8 @@ def by_part(
         part = forecasts[parts == name]
         board = scoreboard(part, call).merge(intervals(part, call, resamples, seed), on=["model", "bucket"])
         ticker_days = part[["day", "ticker"]].drop_duplicates().shape[0]
-        for model, group in board[board["model"] != REFERENCES[skill]].groupby("model"):
+        own = [m for m in board["model"].unique() if reference(skill, m) == m]
+        for model, group in board[~board["model"].isin(own)].groupby("model"):
             row = {"part": name, "ticker_days": ticker_days, "model": model, **dict.fromkeys(BUCKETS, "–")}
             for _, cell in group.iterrows():
                 if np.isnan(cell[skill]):
@@ -342,8 +352,8 @@ def report(
             "## Accuracy",
             "`pinball`: mean quantile loss on log moves, lower is better. `skill`: 1 − pinball / random walk's, above 0 "
             "beats it" + (
-                "; `skill_cal` the same against the calibrated random walk (`ts-calibrate`), the fair bar for a "
-                "calibrated model" if calibrated else ""
+                "; `skill_cal` the same against the random walk calibrated the same way (`ts-calibrate`, `-cal` "
+                "pooled or `-cal-setup` per setup), the fair bar for a calibrated model" if calibrated else ""
             ) + ". Each on the ticker-days the model and its reference share. `mae` / `mdae`: mean / median |median − real|, the median one robust to a few wild names. `coverage_80`: real inside the 10–90 % band, 80 % expected. "
             "`direction`: median and real move of the same sign, flat moves left out. `real_down`: share of "
             "real moves down, the bar a direction call has to clear.",

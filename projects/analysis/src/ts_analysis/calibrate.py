@@ -6,13 +6,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ts_analysis.entry import after_entry, entries
+from ts_analysis.entry import after_entry, entries, with_setup
 from ts_analysis.score import COLUMNS, load_forecasts, with_outcome
 from ts_analysis.store import Store
 
 log = logging.getLogger("ts_analysis.calibrate")
 
 SUFFIX = "-cal"
+SETUP_SUFFIX = "-cal-setup"
 COVERAGE = 0.80
 MIN_DAYS = 5
 # A flat forecast has no band to stretch, and a corrected model is never corrected again.
@@ -40,22 +41,31 @@ def corrected(today: pd.DataFrame, shift: float, factor: float) -> pd.DataFrame:
     return out
 
 
-def calibrate(forecasts: pd.DataFrame, min_days: int = MIN_DAYS, window: int | None = None) -> pd.DataFrame:
+def is_corrected(model: str) -> bool:
+    return model.endswith((SUFFIX, SETUP_SUFFIX))
+
+
+def calibrate(
+    forecasts: pd.DataFrame, min_days: int = MIN_DAYS, window: int | None = None, by_setup: bool = False
+) -> pd.DataFrame:
     """Walk-forward, per model and horizon bucket: the correction applied to day J is learned from the
     model's days before J only (the last `window` of them if given), never from J or after. A day with
     fewer than `min_days` before it is left out. The corrected forecasts keep the stored columns, under
-    the model's name plus `-cal`."""
+    the model's name plus `-cal`. With `by_setup`, also per setup the ticker entered on, read from the
+    `setup` column: a GUS is corrected from the past GUS only and `min_days` counts the days the setup
+    was seen on, under `-cal-setup`."""
     frame = with_outcome(forecasts)
     frame["day"] = frame["day"].astype(str)
+    keys, suffix = (["model", "bucket", "setup"], SETUP_SUFFIX) if by_setup else (["model", "bucket"], SUFFIX)
     out = []
-    for (model, _), group in frame.groupby(["model", "bucket"]):
+    for (model, *_), group in frame.groupby(keys):
         days = sorted(group["day"].unique())
         for i, day in enumerate(days):
             before = days[max(0, i - window) if window else 0 : i]
             if len(before) < min_days:
                 continue
             shift, factor = correction(group[group["day"].isin(before)])
-            out.append(corrected(group[group["day"] == day], shift, factor).assign(model=model + SUFFIX))
+            out.append(corrected(group[group["day"] == day], shift, factor).assign(model=model + suffix))
     if not out:
         return pd.DataFrame(columns=forecasts.columns)
     return pd.concat(out)[list(forecasts.columns)].reset_index(drop=True)
@@ -68,6 +78,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--min-days", type=int, default=MIN_DAYS, help="past days needed before a day is corrected")
     parser.add_argument("--window", type=int, help="learn from the last N days only; all past days by default")
     parser.add_argument(
+        "--by-setup", action="store_true", help="learn the correction per setup (gus, push), under -cal-setup"
+    )
+    parser.add_argument(
         "--all-cuts", action="store_true", help="keep the cuts before the ticker reached its gap, which read the future"
     )
     args = parser.parse_args(argv)
@@ -77,22 +90,27 @@ def main(argv: list[str] | None = None) -> None:
     if forecasts.empty:
         parser.exit(1, "error: no forecasts in data/forecasts, run ts-replay first\n")
     stored = sorted(forecasts["model"].unique())
-    models = args.model or [m for m in stored if m not in SKIPPED and not m.endswith(SUFFIX)]
+    models = args.model or [m for m in stored if m not in SKIPPED and not is_corrected(m)]
     if unknown := sorted(set(models) - set(stored)):
         parser.exit(1, f"error: no forecasts for {' '.join(unknown)}\n")
 
     store = Store(args.data)
+    entry = entries(store)
     if not args.all_cuts:
-        forecasts = after_entry(forecasts, entries(store))
+        forecasts = after_entry(forecasts, entry)
+    if args.by_setup:
+        forecasts = with_setup(forecasts, entry)
+    suffix = SETUP_SUFFIX if args.by_setup else SUFFIX
     for model in models:
-        result = calibrate(forecasts[forecasts["model"] == model], args.min_days, args.window)
-        target = store.root / "forecasts" / (model + SUFFIX)
+        result = calibrate(forecasts[forecasts["model"] == model], args.min_days, args.window, args.by_setup)
+        result = result.drop(columns="setup", errors="ignore")
+        target = store.root / "forecasts" / (model + suffix)
         # Derived files, rebuilt whole: a day no longer corrected (other --min-days) must not linger.
         for stale in target.glob("*.parquet"):
             stale.unlink()
         for day, frame in result.groupby("day"):
-            store.save_forecasts(model + SUFFIX, date.fromisoformat(str(day)), frame)
-        log.info("%s: %d days corrected into %s", model, result["day"].nunique(), model + SUFFIX)
+            store.save_forecasts(model + suffix, date.fromisoformat(str(day)), frame)
+        log.info("%s: %d days corrected into %s", model, result["day"].nunique(), model + suffix)
 
 
 if __name__ == "__main__":

@@ -307,3 +307,20 @@ def test_a_population_with_a_single_setup_gets_no_by_setup_section():
         for m in ("random-walk", "timestral-28M")
     ]
     assert "## By setup" not in report(pd.DataFrame(rows), 0.05, resamples=10)
+
+
+def test_a_model_corrected_per_setup_is_set_against_the_random_walk_corrected_per_setup():
+    # The pooled random-walk-cal is far off: the per-setup model must be set against random-walk-cal-setup only.
+    rows = [
+        on(ticker, "2026-10-26", "10:00", forecast(model, actual, band))
+        for ticker, actual in [("FFIE", 2.30), ("MULN", 2.52), ("GCTK", 2.41)]
+        for model, band in [
+            ("random-walk", (-0.05, 0.0, 0.05)),
+            ("random-walk-cal", (-0.30, -0.20, -0.10)),
+            ("random-walk-cal-setup", (-0.04, 0.01, 0.06)),
+            ("timestral-28M-cal-setup", (-0.04, 0.01, 0.06)),
+        ]
+    ]
+    assert board_row(rows, model="timestral-28M-cal-setup")["skill_cal"] == pytest.approx(0, abs=1e-12)
+    spans = interval_row(rows, model="timestral-28M-cal-setup", resamples=50)
+    assert spans["skill_cal_high"] == pytest.approx(0, abs=1e-12)
