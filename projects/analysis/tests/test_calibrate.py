@@ -1,3 +1,5 @@
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -5,6 +7,7 @@ import pytest
 from ts_analysis.calibrate import calibrate, main
 from ts_analysis.replay import QUANTILES
 from ts_analysis.score import COLUMNS
+from ts_analysis.store import Store
 
 DAYS = ["2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"]
 DAYS += ["2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15"]
@@ -109,3 +112,69 @@ def test_the_cli_never_corrects_the_flat_baseline_or_a_corrected_model(tmp_path)
             pd.DataFrame([r | {"model": model} for r in session(day)]).to_parquet(folder / f"{day}.parquet", index=False)
     main(["--data", str(tmp_path), "--all-cuts"])
     assert sorted(p.name for p in (tmp_path / "forecasts").iterdir()) == ["flat", "timestral-28M-cal"]
+
+
+def entered(rows: list[dict], ticker: str, setup: str) -> list[dict]:
+    return [r | {"ticker": ticker, "setup": setup} for r in rows]
+
+
+def gus_and_push(gus_offset: float, push_offset: float, days: list[str] = DAYS[:5]) -> list[dict]:
+    """BNAI gapped up in the premarket (gus), AIOK pushed during the session (push), each with its own bias."""
+    rows = [r for day in days for r in entered(session(day, offset=gus_offset), "BNAI", "gus")]
+    return rows + [r for day in days for r in entered(session(day, offset=push_offset), "AIOK", "push")]
+
+
+def today(setup: str, ticker: str, real: float = 0.0) -> dict:
+    return forecast(DAYS[5], real, (-0.05, 0.0, 0.05)) | {"ticker": ticker, "setup": setup}
+
+
+def test_a_gus_is_corrected_from_the_past_gus_only_when_learned_per_setup():
+    rows = gus_and_push(0.03, -0.03) + [today("gus", "BNAI"), today("push", "AIOK")]
+    split = on(calibrate(pd.DataFrame(rows), by_setup=True), DAYS[5]).set_index("ticker")["q50"]
+    pooled = on(calibrate(pd.DataFrame(rows)), DAYS[5]).set_index("ticker")["q50"]
+    assert (split["BNAI"], split["AIOK"]) == (pytest.approx(0.03), pytest.approx(-0.03))
+    assert pooled["BNAI"] == pytest.approx(pooled["AIOK"])
+
+
+def test_the_per_setup_correction_of_a_day_reads_no_forecast_of_that_day_or_after():
+    rows = gus_and_push(0.0, 0.0, DAYS[:7])
+    first = calibrate(pd.DataFrame(rows), by_setup=True)
+    wild = [r | {"actual": r["actual"] * 1.4} if r["day"] >= DAYS[5] else r for r in rows]
+    again = calibrate(pd.DataFrame(wild), by_setup=True)
+    pd.testing.assert_frame_equal(
+        on(first, DAYS[5])[COLUMNS].reset_index(drop=True), on(again, DAYS[5])[COLUMNS].reset_index(drop=True)
+    )
+
+
+def test_a_setup_seen_on_fewer_past_days_than_needed_is_left_out_while_the_other_is_corrected():
+    rows = gus_and_push(0.0, 0.0)
+    rows = [r for r in rows if not (r["setup"] == "gus" and r["day"] == DAYS[0])]
+    rows += [today("gus", "BNAI"), today("push", "AIOK")]
+    assert list(on(calibrate(pd.DataFrame(rows), by_setup=True), DAYS[5])["ticker"].unique()) == ["AIOK"]
+
+
+def test_the_per_setup_correction_is_stored_under_its_own_name():
+    rows = gus_and_push(0.0, 0.0) + [today("gus", "BNAI")]
+    assert list(calibrate(pd.DataFrame(rows), by_setup=True)["model"].unique()) == ["timestral-28M-cal-setup"]
+
+
+def test_the_cli_writes_the_per_setup_correction_next_to_the_pooled_one(tmp_path):
+    # FFIE closed at $1.70: +40 % is $2.38, reached on its 9:30 bar, before every cut.
+    store = Store(tmp_path)
+    folder = tmp_path / "forecasts" / "timestral-28M"
+    folder.mkdir(parents=True)
+    for day in DAYS[:6]:
+        store.save_picks(
+            date.fromisoformat(day),
+            {"day": day, "rule": {"min_gap": 0.4}, "candidates": [{"ticker": "FFIE", "prev_close": 1.70}], "picked": ["FFIE"]},
+        )
+        store.save_bars(date.fromisoformat(day), "FFIE", [
+            {"t": int(pd.Timestamp(f"{day} 09:30", tz="America/New_York").timestamp() * 1000),
+             "o": 2.30, "h": 2.40, "l": 2.25, "c": 2.40, "v": 50000}
+        ])
+        pd.DataFrame(session(day)).to_parquet(folder / f"{day}.parquet", index=False)
+    main(["--data", str(tmp_path)])
+    main(["--data", str(tmp_path), "--by-setup"])
+    written = tmp_path / "forecasts" / "timestral-28M-cal-setup" / f"{DAYS[5]}.parquet"
+    assert (tmp_path / "forecasts" / "timestral-28M-cal" / f"{DAYS[5]}.parquet").exists() and written.exists()
+    assert "setup" not in pd.read_parquet(written).columns
