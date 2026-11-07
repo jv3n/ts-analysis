@@ -7,6 +7,7 @@ from ts_analysis.score import (
     COLUMNS,
     big_moves,
     by_month,
+    by_setup,
     intervals,
     main,
     pinball,
@@ -274,3 +275,35 @@ def test_the_skill_is_given_for_each_month_the_days_span():
 def test_a_single_month_gets_no_by_month_section():
     rows = [on("FFIE", "2026-10-26", "10:00", forecast(m, 2.30, (-0.05, 0.0, 0.05))) for m in ("random-walk", "timestral-28M")]
     assert "## By month" not in report(pd.DataFrame(rows), 0.05, resamples=10)
+
+
+def test_the_skill_is_given_for_each_setup_the_tickers_entered_on():
+    band = (-0.05, 0.0, 0.05)
+    rows = [
+        on(ticker, "2026-10-27", "10:00", forecast(model, actual, band)) | {"setup": setup}
+        for ticker, setup, actual in [("FFIE", "gus", 2.30), ("MULN", "push", 2.52)]
+        for model in ("random-walk", "timestral-28M")
+    ]
+    setups = by_setup(pd.DataFrame(rows), resamples=10)
+    assert list(setups["setup"]) == ["gus", "push"] and list(setups["ticker_days"]) == [1, 1]
+    assert set(setups["model"]) == {"timestral-28M"}
+    assert "## By setup" in report(pd.DataFrame(rows), 0.05, resamples=10)
+
+
+def test_a_calibrated_report_splits_the_setups_on_the_skill_against_the_calibrated_random_walk():
+    rows = [
+        on(ticker, "2026-10-27", "10:00", forecast(model, actual, (-0.04, 0.01, 0.06))) | {"setup": setup}
+        for ticker, setup, actual in [("FFIE", "gus", 2.30), ("MULN", "push", 2.52)]
+        for model in ("random-walk", "random-walk-cal", "timestral-28M-cal")
+    ]
+    text = report(pd.DataFrame(rows), 0.05, resamples=10)
+    assert "`skill_cal` per setup" in text
+    assert "| gus | 1 | timestral-28M-cal | – | +0.0% [+0.0%, +0.0%] | – | – |" in text
+
+
+def test_a_population_with_a_single_setup_gets_no_by_setup_section():
+    rows = [
+        on("FFIE", "2026-10-26", "10:00", forecast(m, 2.30, (-0.05, 0.0, 0.05))) | {"setup": "gap"}
+        for m in ("random-walk", "timestral-28M")
+    ]
+    assert "## By setup" not in report(pd.DataFrame(rows), 0.05, resamples=10)

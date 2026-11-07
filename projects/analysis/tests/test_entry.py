@@ -2,7 +2,7 @@ from datetime import date
 
 import pandas as pd
 
-from ts_analysis.entry import after_entry, entries, entry_minute, is_gus, scanner_entry
+from ts_analysis.entry import after_entry, entries, entry_minute, is_gus, scanner_entry, with_setup
 from ts_analysis.score import main
 from ts_analysis.store import Store
 
@@ -42,6 +42,14 @@ def test_a_ticker_day_without_an_entry_is_left_out():
     entry = pd.DataFrame([{"day": DAY, "ticker": "AIOK", "entry": 300}])
     kept = after_entry(pd.DataFrame([forecast("11:00"), forecast("11:00", ticker="AEYE")]), entry)
     assert list(kept["ticker"]) == ["AIOK"]
+
+
+def test_each_forecast_carries_the_setup_its_ticker_entered_on():
+    entry = pd.DataFrame([{"day": DAY, "ticker": "AIOK", "setup": "gus", "entry": 330},
+                          {"day": DAY, "ticker": "AEYE", "setup": "push", "entry": 372}])
+    frame = pd.DataFrame([forecast("10:00"), forecast("11:00", ticker="AEYE"), forecast("11:00", ticker="MULN")])
+    setup = with_setup(frame, entry)["setup"]
+    assert list(setup[:2]) == ["gus", "push"] and pd.isna(setup.iloc[2])
 
 
 def stored(tmp_path) -> Store:

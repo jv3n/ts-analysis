@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ts_analysis.entry import after_entry, entries
+from ts_analysis.entry import after_entry, entries, with_setup
 from ts_analysis.replay import QUANTILES
 from ts_analysis.store import Store
 
@@ -187,23 +187,37 @@ def intervals(
     return board.sort_values(["bucket", "model"]).reset_index(drop=True)
 
 
-def by_month(forecasts: pd.DataFrame, call: float = 0.05, resamples: int = 1000, seed: int = 0) -> pd.DataFrame:
-    """The skill against the random walk and its interval, per month, model and horizon: an edge that
-    lives in one month only is a regime, not a model."""
-    month = forecasts["day"].astype(str).str[:7]
+def by_part(
+    forecasts: pd.DataFrame, parts: pd.Series, skill: str = "skill", call: float = 0.05, resamples: int = 1000, seed: int = 0
+) -> pd.DataFrame:
+    """`skill` and its interval per part of the forecasts (a month, a setup), model and horizon: an edge
+    that lives in one part only is a regime, not a model."""
     rows = []
-    for name in sorted(month.unique()):
-        part = forecasts[month == name]
+    for name in sorted(parts.dropna().unique()):
+        part = forecasts[parts == name]
         board = scoreboard(part, call).merge(intervals(part, call, resamples, seed), on=["model", "bucket"])
-        for model, group in board[board["model"] != "random-walk"].groupby("model"):
-            row = {"month": name, "model": model, **dict.fromkeys(BUCKETS, "–")}
+        ticker_days = part[["day", "ticker"]].drop_duplicates().shape[0]
+        for model, group in board[board["model"] != REFERENCES[skill]].groupby("model"):
+            row = {"part": name, "ticker_days": ticker_days, "model": model, **dict.fromkeys(BUCKETS, "–")}
             for _, cell in group.iterrows():
-                if np.isnan(cell["skill"]):
+                if np.isnan(cell[skill]):
                     continue
-                span = "" if np.isnan(cell["skill_low"]) else f" [{cell['skill_low']:+.1%}, {cell['skill_high']:+.1%}]"
-                row[str(cell["bucket"])] = f"{cell['skill']:+.1%}{span}"
+                low, high = cell[f"{skill}_low"], cell[f"{skill}_high"]
+                span = "" if np.isnan(low) else f" [{low:+.1%}, {high:+.1%}]"
+                row[str(cell["bucket"])] = f"{cell[skill]:+.1%}{span}"
             rows.append(row)
-    return pd.DataFrame(rows, columns=["month", "model", *BUCKETS])
+    return pd.DataFrame(rows, columns=["part", "ticker_days", "model", *BUCKETS])
+
+
+def by_month(forecasts: pd.DataFrame, call: float = 0.05, resamples: int = 1000, seed: int = 0) -> pd.DataFrame:
+    month = forecasts["day"].astype(str).str[:7]
+    return by_part(forecasts, month, "skill", call, resamples, seed).rename(columns={"part": "month"})
+
+
+def by_setup(
+    forecasts: pd.DataFrame, skill: str = "skill", call: float = 0.05, resamples: int = 1000, seed: int = 0
+) -> pd.DataFrame:
+    return by_part(forecasts, forecasts["setup"], skill, call, resamples, seed).rename(columns={"part": "setup"})
 
 
 def quantile_coverage(forecasts: pd.DataFrame) -> pd.DataFrame:
@@ -305,6 +319,12 @@ def report(
          "mae", "mdae", "coverage_80", "coverage_80_95", "direction", "direction_95", "real_down"]
     ]
     months = by_month(forecasts, call, resamples, seed) if forecasts["day"].astype(str).str[:7].nunique() > 1 else None
+    setup_skill = "skill_cal" if calibrated else "skill"
+    setups = (
+        by_setup(forecasts, setup_skill, call, resamples, seed)
+        if "setup" in forecasts and forecasts["setup"].nunique() > 1
+        else None
+    )
     calls = board[
         ["bucket", "model", "down_calls", "down_days", "down_hit", "down_hit_95", "down_real", "up_calls", "up_days",
          "up_hit", "up_hit_95", "up_real", "sure_calls", "sure_hit"]
@@ -360,6 +380,17 @@ def report(
                 if months is not None
                 else []
             ),
+            *(
+                [
+                    "## By setup",
+                    f"`{setup_skill}` per setup the ticker entered on, with its 95 % interval over that setup's "
+                    "ticker-days: `gus` gapped up in the premarket and enters at the open, `push` enters during the "
+                    "session, the minute it reached its push.",
+                    _table(setups, {}),
+                ]
+                if setups is not None
+                else []
+            ),
         ]
     )
 
@@ -387,12 +418,14 @@ def main(argv: list[str] | None = None) -> None:
     if forecasts.empty:
         parser.exit(1, "error: no forecasts between --start and --end\n")
     scope = "every cut"
+    entry = entries(Store(args.data))
     if not args.all_cuts:
-        kept = after_entry(forecasts, entries(Store(args.data)))
+        kept = after_entry(forecasts, entry)
         scope = f"the cuts after the ticker reached its gap, {len(kept)} of {len(forecasts)}"
         forecasts = kept
         if forecasts.empty:
             parser.exit(1, "error: no cut after a ticker reached its gap, --all-cuts to keep them all\n")
+    forecasts = with_setup(forecasts, entry)
     text = report(forecasts, args.call, args.big, args.resamples, args.seed, scope)
     path = args.data / "reports" / "score.md"
     path.parent.mkdir(parents=True, exist_ok=True)

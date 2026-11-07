@@ -95,3 +95,9 @@ def after_entry(forecasts: pd.DataFrame, entry: pd.DataFrame) -> pd.DataFrame:
     clock = {c: minute_of(time.fromisoformat(c)) for c in forecasts["cut"].unique()}
     cut = forecasts["cut"].map(clock).to_numpy()
     return forecasts[cut > reached]
+
+
+def with_setup(forecasts: pd.DataFrame, entry: pd.DataFrame) -> pd.DataFrame:
+    """Each forecast with the setup its ticker entered on, missing for a ticker that never entered."""
+    setups = {(str(d), t): s for d, t, s in entry[["day", "ticker", "setup"]].itertuples(index=False)}
+    return forecasts.assign(setup=[setups.get((str(d), t)) for d, t in zip(forecasts["day"], forecasts["ticker"])])
